@@ -1,10 +1,15 @@
 # TemporalDisaggregations.jl
 
-[![Build Status](https://github.com/alex-s-gardner/TemporalDisaggregations.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/alex-s-gardner/TemporalDisaggregations.jl/actions/workflows/CI.yml?query=branch%3Amain)
-
 Reconstruct instantaneous time series from **interval-averaged observations** — measurements that represent the average of a signal over a time window rather than a point-in-time snapshot.
 
 ![Overview of all three methods](docs/images/overview.png)
+
+## Installation
+
+```julia
+using Pkg
+Pkg.add("TemporalDisaggregations")
+```
 
 ## The Problem
 
@@ -14,20 +19,16 @@ Many real-world measurements are temporal averages rather than point observation
 - **Climatology**: monthly or seasonal summaries of daily observations
 - **Finance**: period-average prices or returns
 
-When intervals are irregular, overlapping, or sparse, standard interpolation fails. `TemporalDisaggregations.jl` solves the inverse problem: given *n* interval averages `yᵢ ≈ (1/Δtᵢ) ∫_{t1ᵢ}^{t2ᵢ} x(t) dt`, recover the instantaneous signal `x(t)` on a regular output grid with uncertainty estimates.
+When intervals are irregular, overlapping, or sparse, standard interpolation fails. `TemporalDisaggregations.jl` solves this inverse problem: given a set of interval averages — each one the mean of an unknown signal over a time window — it recovers the underlying instantaneous signal on a regular output grid, along with uncertainty estimates.
 
-## Installation
-
-```julia
-using Pkg
-Pkg.add("TemporalDisaggregations")
-```
+In math: `yᵢ ≈ (1/Δtᵢ) ∫_{t1ᵢ}^{t2ᵢ} x(t) dt`
 
 ## Quick Start
 
 ```julia
 using TemporalDisaggregations
 using Dates
+using DimensionalData: dims, Ti
 
 # Your data: interval-averaged observations
 y  = [2.3, 1.8, 3.1, 2.7, ...]          # observed averages
@@ -38,9 +39,13 @@ t2 = [Date(2020,1,28), Date(2020,3,10), ...]  # interval end dates
 result = disaggregate(y, t1, t2)
 
 # Access results
-dates  = collect(dims(result.values, Ti))   # Vector{Date}
-values = Array(result.values)               # Vector{Float64} — posterior mean
+dates  = collect(dims(result.signal, Ti))   # Vector{Date}
+values = Array(result.signal)               # Vector{Float64} — posterior mean
 stds   = Array(result.std)                  # Vector{Float64} — posterior std
+
+# Plot (requires CairoMakie)
+using CairoMakie
+lines(result[:signal])
 ```
 
 ## Methods
@@ -49,7 +54,7 @@ All three methods share the same interface and return type. Switch methods with 
 
 ### B-spline (`method = :spline`)
 
-Models the antiderivative `F(t)` of the instantaneous signal as a quartic B-spline, constrained so that `F(t2ᵢ) − F(t1ᵢ)` matches each observed area. The instantaneous signal is `x(t) = F′(t)`. P-spline regularisation controls smoothness; an optional tension penalty suppresses oscillation near sparse regions.
+Fits a smooth curve whose running averages match the observations. A regularisation parameter controls how smooth the result is; an optional tension penalty suppresses oscillation near sparse regions.
 
 ```julia
 result = disaggregate(y, t1, t2;
@@ -61,13 +66,13 @@ result = disaggregate(y, t1, t2;
 )
 ```
 
-**Uncertainty:** Frequentist P-spline confidence band derived from the hat-matrix trace of the regularised normal equations.
+**Uncertainty:** Confidence band derived from how strongly the regularisation constrains the fit.
 
 ![B-spline reconstruction](docs/images/spline_detail.png)
 
 ### Tension-spline (`method = :spline`, `tension > 0`)
 
-A tension penalty `τ² ‖D₂ a‖²` is added alongside the standard curvature penalty. This stiffens the spline in data-sparse regions, suppressing oscillation while preserving fidelity where observations are dense.
+Adding tension stiffens the curve in data-sparse regions — think of pulling the spline taut like a guitar string. It suppresses oscillation while preserving fidelity where observations are dense.
 
 ```julia
 result = disaggregate(y, t1, t2;
@@ -88,7 +93,7 @@ Fits the parametric model
 x(t) = μ + β·(t − t̄) + γ(year) + A·sin(2πt) + B·cos(2πt)
 ```
 
-where `μ` is the mean, `β` is a linear trend, `γ(year)` is a per-year anomaly, and `A`, `B` are annual seasonal amplitudes. The design matrix is constructed analytically (exact interval integrals, no quadrature) — the fastest method. Fitted parameters are accessible in the result metadata.
+where `μ` is the mean, `β` is a linear trend, `γ(year)` is a per-year anomaly, and `A`, `B` are annual seasonal amplitudes. All integrals are solved analytically, making this the fastest of the three methods. Fitted parameters are accessible in the result metadata.
 
 ```julia
 result = disaggregate(y, t1, t2;
@@ -106,13 +111,13 @@ md[:trend]        # linear trend (units/year)
 md[:interannual]  # Dict{Int,Float64} of per-year anomalies
 ```
 
-**Uncertainty:** WLS covariance propagation from the regularised normal equations.
+**Uncertainty:** Propagated from the fitted model coefficients via standard weighted least squares.
 
 ![Sinusoid reconstruction](docs/images/sinusoid_detail.png)
 
 ### Gaussian Process (`method = :gp`)
 
-Models the signal as a GP prior specified by a `KernelFunctions.jl` kernel. Each observation is the integral of the GP over its interval, approximated by Gauss-Legendre quadrature. A sparse inducing-point (DTC) approximation on a monthly grid reduces computation from O(n³) to O(m³) where m ≈ 12·years.
+Models the signal as a Gaussian Process — a flexible probabilistic model encoding correlations through time. A sparse approximation keeps computation fast even for long records. Specify the correlation structure via a `KernelFunctions.jl` kernel.
 
 ```julia
 using KernelFunctions
@@ -124,12 +129,12 @@ result = disaggregate(y, t1, t2;
     method    = :gp,
     kernel    = k,
     obs_noise = 4.0,    # observation noise variance σ²
-    n_quad    = 5,      # Gauss-Legendre quadrature points per interval
+    n_quad    = 5,      # numerical integration points per interval (5 is usually enough)
     loss_norm = :L2,
 )
 ```
 
-**Uncertainty:** Exact GP posterior standard deviation (Bayesian credible interval).
+**Uncertainty:** Full GP posterior standard deviation — a true probabilistic credible interval given the chosen kernel.
 
 ![GP posterior mean and 2σ band](docs/images/gp_detail.png)
 
@@ -139,15 +144,23 @@ result = disaggregate(y, t1, t2;
 
 ```julia
 # Daily output
-result = disaggregate(y, t1, t2; output_step = Day(1))
+result = disaggregate(y, t1, t2; output_period = Day(1))
 
 # Weekly output
-result = disaggregate(y, t1, t2; output_step = Week(1))
+result = disaggregate(y, t1, t2; output_period = Week(1))
+
+# Monthly output on the 15th of each month (instead of the 1st)
+result = disaggregate(y, t1, t2; output_start = Date(2020, 1, 15))
+
+# Weekly output starting from a specific date
+result = disaggregate(y, t1, t2; output_period = Week(1), output_start = Date(2020, 1, 8))
 ```
+
+The `output_start` kwarg anchors the output grid. For `Month` steps, only the day-of-month matters — the grid automatically starts from the correct month for your data. For other step sizes, `output_start` is used as the literal first grid point.
 
 ### Robust L1 Loss
 
-All methods support `loss_norm = :L1` for robustness to blunders (outliers). L1 is solved via Iteratively Reweighted Least Squares (IRLS):
+All methods support `loss_norm = :L1` for robustness to blunders (outliers). L1 loss down-weights suspicious observations automatically, without needing to identify them manually:
 
 ```julia
 result = disaggregate(y, t1, t2; method = :gp, loss_norm = :L1, obs_noise = 4.0)
@@ -157,35 +170,67 @@ result = disaggregate(y, t1, t2; method = :gp, loss_norm = :L1, obs_noise = 4.0)
 
 All methods return a `DimStack` (from [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl)) with two layers:
 
+```julia
+result[:signal]    # DimArray — instantaneous signal value at a point in time (Ti)
+result[:std]       # DimArray — method dependent standard deviation at a point in time (Ti)
+```
+
+
 > **Note: `std` values are not directly comparable across methods.**
 > Each method derives uncertainty differently, so the magnitude and shape of `std` reflects the method's statistical framework rather than a universal measure of confidence:
 >
-> | Method | `std` interpretation | Key caveat |
+> | Method | What `std` measures | Key caveat |
 > |--------|---------------------|------------|
-> | **GP** | Bayesian posterior SD — exact marginal uncertainty given the GP prior and data | Depends strongly on the prior kernel and `obs_noise`; can be over- or under-confident if the kernel is mis-specified |
-> | **Spline** | Frequentist P-spline confidence band — propagated from the hat-matrix of the regularised normal equations | Conditional on `smoothness` (λ); does not capture model misspecification or uncertainty in λ itself |
-> | **Sinusoid** | Frequentist WLS prediction SE — propagated from the covariance of the fitted parametric coefficients | Conditional on the parametric model being correctly specified (mean + trend + sinusoid); underestimates uncertainty when the true signal departs from this form |
+> | **GP** | True Bayesian uncertainty from the GP model | Depends on your choice of kernel and `obs_noise` |
+> | **Spline** | How strongly the regularisation constrains the fit | Controlled by `smoothness`; does not account for uncertainty in the smoothness level itself |
+> | **Sinusoid** | Uncertainty in the fitted seasonal parameters | Only valid if the true signal is well-described by mean + trend + sinusoid |
 >
-> For all methods, `std` is approximate when `loss_norm = :L1` (uncertainty is computed from the L2 system at the IRLS-converged solution).
+> When using `loss_norm = :L1`, `std` is approximate — it is computed from the final reweighted system, not from L1 theory.
 
-
-```julia
-result.values    # DimArray — posterior mean on the output Ti(dates) grid
-result.std       # DimArray — posterior standard deviation (same grid)
-```
-
-Standard access patterns:
+DimStacks provide an intuitive summary when displayed in the REPL:
 
 ```julia
-using DimensionalData: dims, Ti, metadata
-
-dates  = collect(dims(result.values, Ti))   # Vector{Date}
-values = Array(result.values)               # plain Vector{Float64}
-stds   = Array(result.std)                  # plain Vector{Float64}
-meta   = metadata(result)                   # Dict with method-specific params
+julia> result
+┌ 48-element DimStack ┐
+├─────────────────────┴────────────────────────────────────────────────────────────────────── dims ┐
+  ↓ Ti Sampled{Date} [Date("2020-01-01"), …, Date("2023-12-01")] ForwardOrdered Irregular Points
+├────────────────────────────────────────────────────────────────────────────────────────── layers ┤
+  :signal eltype: Float64 dims: Ti size: 48
+  :std    eltype: Float64 dims: Ti size: 48
+├──────────────────────────────────────────────────────────────────────────────────────── metadata ┤
+  Dict{Symbol, Any} with 6 entries:
+  :output_period => Month(1)
+  :method        => :gp
+  :obs_noise     => 4.0
+  :loss_norm     => :L2
+  :kernel        => Sum of 2 kernels:…
+  :n_quad        => 5
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-DimensionalData integration enables direct use with plotting libraries, `DimArray` arithmetic, and labelled array operations.
+and you can access a single variable like this
+```julia
+result[:signal]
+┌ 48-element DimArray{Float64, 1} signal ┐
+├────────────────────────────────────────┴─────────────────────────────────────────────────── dims ┐
+  ↓ Ti Sampled{Date} [Date("2020-01-01"), …, Date("2023-12-01")] ForwardOrdered Irregular Points
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ 2020-01-01   -8.39559
+ 2020-02-01    0.754019
+ 2020-03-01    6.99415
+ ⋮
+ 2023-11-01  -10.0144
+ 2023-12-01   -3.80605
+```
+
+DimensionalData arrays work directly with Makie.jl for plotting:
+
+```julia
+# Install CairoMakie if you don't have it:
+# using Pkg; Pkg.add("CairoMakie")
+using CairoMakie
+lines(result[:signal])   # x-axis = dates, y-axis = signal values
+```
 
 ## Dependencies
 

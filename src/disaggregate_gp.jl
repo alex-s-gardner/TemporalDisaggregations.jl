@@ -62,9 +62,9 @@ For a 5-year record (m ≈ 60), this is ~10⁵× faster than the O(n³) dense so
 - `loss_norm`: Loss function for the data-fit term. `:L2` (default) minimises the
   weighted sum of squared residuals. `:L1` uses Iteratively Reweighted Least Squares
   (IRLS) to minimise the sum of absolute residuals, which is more robust to outliers.
-- `output_step`: Temporal resolution of the output grid as a `Dates.Period`
+- `output_period`: Temporal resolution of the output grid as a `Dates.Period`
   (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`. Inducing points are
-  always kept on a monthly grid regardless of this setting; when `output_step ≠ Month(1)`
+  always kept on a monthly grid regardless of this setting; when `output_period ≠ Month(1)`
   the posterior is predicted at the output grid via an additional O(m²) kriging step.
 
 # Returns
@@ -75,8 +75,8 @@ For a 5-year record (m ≈ 60), this is ~10⁵× faster than the O(n³) dense so
 ```julia
 k = 20^2 * with_lengthscale(Matern52Kernel(), 1/6)
 result = disaggregate_gp(y, t1, t2; kernel = k, obs_noise = 4.0, n_quad = 5)
-lines(result.dates, result.values)
-band(result.dates, result.values .- 2result.std, result.values .+ 2result.std)
+lines(result.dates, result.signal)
+band(result.dates, result.signal .- 2result.std, result.signal .+ 2result.std)
 ```
 """
 function disaggregate_gp(aggregate_values::AbstractVector,
@@ -86,7 +86,8 @@ function disaggregate_gp(aggregate_values::AbstractVector,
                             obs_noise::Real = 1.0,
                             n_quad::Int = 5,
                             loss_norm::Symbol = :L2,
-                            output_step::Dates.Period = Month(1))
+                            output_period::Dates.Period = Month(1),
+                            output_start::Union{Date,Nothing} = nothing)
 
     σ²  = Float64(obs_noise)
     n   = length(aggregate_values)
@@ -103,8 +104,8 @@ function disaggregate_gp(aggregate_values::AbstractVector,
         throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
 
     order = sortperm(interval_start)
-    t1    = _decimal_year.(interval_start[order])
-    t2    = _decimal_year.(interval_end[order])
+    t1    = decimal_year.(interval_start[order])
+    t2    = decimal_year.(interval_end[order])
     y     = Float64.(aggregate_values[order])
 
     # ── Monthly inducing grid (always monthly for O(m³) tractability) ─────────
@@ -112,8 +113,10 @@ function disaggregate_gp(aggregate_values::AbstractVector,
     m = length(Z)
 
     # ── Output grid (may differ from inducing grid) ────────────────────────────
-    out_dates, Z_out = output_step == Month(1) ?
-        (monthly_dates, Z) : _date_grid(t1[1], t2[end], output_step)
+    # Use inducing grid directly only when output is default monthly-on-1st.
+    use_inducing_as_output = output_period == Month(1) && isnothing(output_start)
+    out_dates, Z_out = use_inducing_as_output ?
+        (monthly_dates, Z) : _date_grid(t1[1], t2[end], output_period; output_start)
 
     # ── Gauss-Legendre quadrature ─────────────────────────────────────────────
     # GL weights sum to 2 on [−1, 1]; dividing by 2 gives a mean-approximation
@@ -175,9 +178,9 @@ function disaggregate_gp(aggregate_values::AbstractVector,
     K_diag   = kernelmatrix_diag(kernel, Z)   # [m]
     post_var = K_diag .- dropdims(sum(S_W .* R_mat, dims=1), dims=1)
 
-    if output_step == Month(1)
+    if use_inducing_as_output
         return DimStack(
-            (values = DimArray(μ_Z,                        Ti(out_dates)),
+            (signal = DimArray(μ_Z,                        Ti(out_dates)),
              std    = DimArray(sqrt.(max.(0.0, post_var)), Ti(out_dates)));
             metadata = Dict(
                 :method      => :gp,
@@ -185,6 +188,7 @@ function disaggregate_gp(aggregate_values::AbstractVector,
                 :obs_noise   => obs_noise,
                 :n_quad      => n_quad,
                 :loss_norm   => loss_norm,
+                :output_period => output_period,
             )
         )
     else
@@ -200,7 +204,7 @@ function disaggregate_gp(aggregate_values::AbstractVector,
         # diag(A B) = sum(A .* B', dims=2) for A [n×m] and B [m×n]
         post_var_out = K_diag_out .- dropdims(sum(K_out_Z .* R_out', dims=2), dims=2)
         return DimStack(
-            (values = DimArray(μ_out,                            Ti(out_dates)),
+            (signal = DimArray(μ_out,                            Ti(out_dates)),
              std    = DimArray(sqrt.(max.(0.0, post_var_out)),   Ti(out_dates)));
             metadata = Dict(
                 :method      => :gp,
@@ -208,6 +212,7 @@ function disaggregate_gp(aggregate_values::AbstractVector,
                 :obs_noise   => obs_noise,
                 :n_quad      => n_quad,
                 :loss_norm   => loss_norm,
+                :output_period => output_period,
             )
         )
     end

@@ -4,7 +4,7 @@ using Dates
     disaggregate(aggregate_values, interval_start, interval_end;
                    method      = :spline,
                    loss_norm   = :L2,
-                   output_step = Month(1),
+                   output_period = Month(1),
                    kwargs...)
 
 Reconstruct an instantaneous time series from interval-averaged observations,
@@ -24,19 +24,22 @@ dispatching to one of three underlying methods controlled by `method`.
     Key kwargs: `kernel`, `obs_noise`, `n_quad`.
 - `loss_norm`: Loss function, shared by all methods. `:L2` (default) = weighted
   least-squares; `:L1` = robust LAD via IRLS (suppresses blunders automatically).
-- `output_step`: Temporal resolution of the output `dates` grid as a `Dates.Period`
+- `output_period`: Temporal resolution of the output `dates` grid as a `Dates.Period`
   (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`. For `:gp`, inducing
   points are always kept on a monthly grid; finer output grids use an extra kriging step.
+- `output_start`: Anchor date for the output grid. For `Month` steps, the day-of-month
+  is used (e.g. `Date(2020,1,15)` → 15th of each month). For other steps, used as the
+  literal start date. Default `nothing` (1st of each month for monthly output).
 - `kwargs...`: All remaining keyword arguments are forwarded unchanged to the
   underlying method function. Pass any method-specific kwarg here.
 
 # Returns
 `DimStack` with layers `values` and `std` (both `DimArray` with `Ti(dates)` dimension)
 for all methods. Access patterns:
-- `result.values`               — `DimArray` of posterior mean
+- `result.signal`               — `DimArray` of posterior mean
 - `result.std`                  — `DimArray` of posterior std (≥ 0)
-- `Array(result.values)`        — plain `Vector{Float64}`
-- `collect(dims(result.values, Ti))` — `Vector{Date}` output grid
+- `Array(result.signal)`        — plain `Vector{Float64}`
+- `collect(dims(result.signal, Ti))` — `Vector{Date}` output grid
 - `metadata(result)`            — method-specific `Dict`; sinusoid includes
   `:mean`, `:trend`, `:amplitude`, `:phase`, `:interannual`
 
@@ -56,7 +59,8 @@ function disaggregate(aggregate_values::AbstractVector,
                         interval_end::AbstractVector{<:Dates.TimeType};
                         method::Symbol        = :spline,
                         loss_norm::Symbol     = :L2,
-                        output_step::Dates.Period = Month(1),
+                        output_period::Dates.Period = Month(1),
+                        output_start::Union{Dates.Date,Nothing} = nothing,
                         kwargs...)
     method ∈ (:spline, :sinusoid, :gp) ||
         throw(ArgumentError(
@@ -66,12 +70,12 @@ function disaggregate(aggregate_values::AbstractVector,
 
     if method == :spline
         return disaggregate_spline(aggregate_values, interval_start, interval_end;
-                                     loss_norm, output_step, kwargs...)
+                                     loss_norm, output_period, output_start, kwargs...)
     elseif method == :sinusoid
         return disaggregate_sinusoid(aggregate_values, interval_start, interval_end;
-                                       loss_norm, output_step, kwargs...)
+                                       loss_norm, output_period, output_start, kwargs...)
     else  # :gp
         return disaggregate_gp(aggregate_values, interval_start, interval_end;
-                                 loss_norm, output_step, kwargs...)
+                                 loss_norm, output_period, output_start, kwargs...)
     end
 end

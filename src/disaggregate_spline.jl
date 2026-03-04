@@ -39,7 +39,7 @@ formulation naturally handles overlapping, gapped, and out-of-order intervals.
 - `loss_norm`: Loss function for the data-fit term. `:L2` (default) minimises the
   weighted sum of squared residuals. `:L1` uses Iteratively Reweighted Least Squares
   (IRLS) to minimise the sum of absolute residuals, which is more robust to outliers.
-- `output_step`: Temporal resolution of the output grid as a `Dates.Period`
+- `output_period`: Temporal resolution of the output grid as a `Dates.Period`
   (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`.
 
 # Returns
@@ -55,7 +55,8 @@ function disaggregate_spline(aggregate_values::AbstractVector,
                         penalty_order::Int = 3,
                         tension::Real = 0.0,
                         loss_norm::Symbol = :L2,
-                        output_step::Dates.Period = Month(1))
+                        output_period::Dates.Period = Month(1),
+                        output_start::Union{Date,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -73,10 +74,9 @@ function disaggregate_spline(aggregate_values::AbstractVector,
 
     # Sort intervals chronologically
     order = sortperm(interval_start)
-    t1    = _decimal_year.(interval_start[order])
-    t2    = _decimal_year.(interval_end[order])
+    t1    = decimal_year.(interval_start[order])
+    t2    = decimal_year.(interval_end[order])
     y     = Float64.(aggregate_values[order])
-    areas = y .* (t2 .- t1)
 
     # Quartic (p=4) B-spline space for F(t); x(t) = F′(t) is cubic.
     # Knot placement is the primary control over smoothness:
@@ -110,6 +110,11 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     # By the fundamental theorem of calculus, C * a = areas  ⟺  F(t2ᵢ)−F(t1ᵢ) = areaᵢ
     C = [bsplinebasis(P_F, j, t2[i]) - bsplinebasis(P_F, j, t1[i])
          for i in 1:n, j in 1:m]
+    # Normalise each row by the interval length so we fit interval averages (y)
+    # rather than interval totals (areas).  This gives equal weight to every
+    # observation regardless of length and keeps RSS in signal² units.
+    Δt     = t2 .- t1
+    C_norm = C ./ Δt
 
     # P-spline penalty of order `penalty_order`: ‖Dᵣ a‖²
     Dr   = _difference_matrix(m, penalty_order)
@@ -129,18 +134,18 @@ function disaggregate_spline(aggregate_values::AbstractVector,
 
     # Weighted least-squares with P-spline (+ optional tension) regularisation.
     # λ scaled by ‖C'C‖/n so `smoothness` is dimensionless.
-    ε_irls = 1e-6 * (std(areas) + 1e-10)
-    CWC = C' * C
+    ε_irls = 1e-6 * (std(y) + 1e-10)
+    CWC = C_norm' * C_norm
     λ   = Float64(smoothness) * (norm(CWC) / n + 1e-10)
-    a   = (CWC + λ * P) \ (C' * areas)          # L2 init (also final if loss_norm==:L2)
+    a   = (CWC + λ * P) \ (C_norm' * y)          # L2 init (also final if loss_norm==:L2)
     if loss_norm == :L1
         w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
-            r     = areas .- C * a
+            r     = y .- C_norm * a
             @. w_irls = 1.0 / (abs(r) + ε_irls)
             W_eff  = Diagonal(w_irls)
-            CWC_e  = C' * W_eff * C
-            a_new  = (CWC_e + λ * P) \ (C' * W_eff * areas)
+            CWC_e  = C_norm' * W_eff * C_norm
+            a_new  = (CWC_e + λ * P) \ (C_norm' * W_eff * y)
             _irls_converged(a_new, a) && (a = a_new; break)
             a = a_new
         end
@@ -150,25 +155,28 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     dP_F = BasicBSpline.derivative(P_F)
 
     # Evaluate on the output grid clamped to the data domain
-    out_dates, eval_times = _date_grid(t_nodes[1], t_nodes[end], output_step)
+    out_dates, eval_times = _date_grid(t_nodes[1], t_nodes[end], output_period; output_start)
     eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
 
     values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:m) for t in eval_times]
 
-    # Frequentist uncertainty via hat-matrix trace (L2 system; approximate for L1)
+    # Type-II MLE (empirical Bayes) for σ²:
+    #   σ̂² = (‖y − C_norm â‖² + λ â′Pâ) / n
+    # The second term is the marginal-likelihood penalty contribution, which
+    # provides a finite noise floor when the system is underdetermined (m ≥ n).
+    # This avoids the near-zero σ̂² that the naive rss/(n−df_fit) gives when
+    # the spline can interpolate the data exactly.
+    rss     = sum(abs2, C_norm * a .- y)                             # residuals in signal units
+    σ̂²     = (rss + λ * dot(a, P * a)) / n
     # Small jitter ensures PD when λ is near zero (CWC rank-deficient for m > n)
     A_unc   = Symmetric(CWC + λ * P)
     L_chol  = cholesky(A_unc + sqrt(eps()) * norm(A_unc) * I(m))
-    V_hat   = L_chol.L \ C'                                          # [m × n]
-    df_fit  = sum(abs2, V_hat)
-    rss     = sum(abs2, C * a .- areas)
-    σ̂²     = rss / max(1.0, n - df_fit)
     B_out   = Float64[bsplinebasis(dP_F, j, t) for t in eval_times, j in 1:m]  # [n_out × m]
     V_out   = L_chol.L \ B_out'                                      # [m × n_out]
     std_vec = sqrt(σ̂²) .* sqrt.(dropdims(sum(abs2, V_out, dims=1), dims=1))
 
     return DimStack(
-        (values = DimArray(values,  Ti(out_dates)),
+        (signal = DimArray(values,  Ti(out_dates)),
          std    = DimArray(std_vec, Ti(out_dates)));
         metadata = Dict(
             :method        => :spline,
@@ -177,6 +185,7 @@ function disaggregate_spline(aggregate_values::AbstractVector,
             :penalty_order => penalty_order,
             :tension       => tension,
             :loss_norm     => loss_norm,
+            :output_period   => output_period,
         )
     )
 end

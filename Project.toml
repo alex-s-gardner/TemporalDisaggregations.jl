@@ -1,6 +1,6 @@
 name = "TemporalDisaggregations"
 uuid = "88cf798b-2db9-4742-8b85-510f6e476edb"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Alex Gardner <32276930+alex-s-gardner@users.noreply.github.com>"]
 
 [deps]

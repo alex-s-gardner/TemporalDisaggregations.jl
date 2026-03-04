@@ -69,7 +69,7 @@ The inter-annual anomalies are L2-regularised toward zero with strength
 - `loss_norm`: Loss function for the data-fit term. `:L2` (default) minimises the
   weighted sum of squared residuals. `:L1` uses Iteratively Reweighted Least Squares
   (IRLS) to minimise the sum of absolute residuals, which is more robust to outliers.
-- `output_step`: Temporal resolution of the output grid as a `Dates.Period`
+- `output_period`: Temporal resolution of the output grid as a `Dates.Period`
   (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`.
 
 # Returns
@@ -82,7 +82,8 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
                                  interval_end::AbstractVector{<:Dates.TimeType};
                                  smoothness_interannual::Real = 1e-2,
                                  loss_norm::Symbol            = :L2,
-                                 output_step::Dates.Period    = Month(1))
+                                 output_period::Dates.Period    = Month(1),
+                                 output_start::Union{Date,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -96,8 +97,8 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
 
     # Sort chronologically
     order = sortperm(interval_start)
-    t1    = _decimal_year.(interval_start[order])
-    t2    = _decimal_year.(interval_end[order])
+    t1    = decimal_year.(interval_start[order])
+    t2    = decimal_year.(interval_end[order])
     y     = Float64.(aggregate_values[order])
 
     # ── Parameter layout ──────────────────────────────────────────────────────
@@ -158,12 +159,39 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
     seasonal_phase     = mod(atan(B_fit, A_fit) / (2π), 1.0)
 
     # ── Evaluate on output grid ───────────────────────────────────────────────
-    out_dates, eval_times = _date_grid(t1[1], t2[end], output_step)
+    out_dates, eval_times = _date_grid(t1[1], t2[end], output_period; output_start)
 
-    values = [(μ_fit + β_fit * (t - t_ref)
-               + get(γ_dict, floor(Int, t), 0.0)
-               + A_fit * sin(2π * t)
-               + B_fit * cos(2π * t))
+    # Interpolate interannual anomalies with a natural cubic spline through year
+    # centres (year + 0.5, γ_year), then add trend, offset, and seasonality.
+    # This gives a smooth output free of year-boundary step discontinuities.
+    γ_xs_sp = Float64.(years) .+ 0.5
+    γ_ys_sp = [γ_dict[yr] for yr in years]
+    n_γ     = length(γ_xs_sp)
+    h_γ     = diff(γ_xs_sp)
+
+    # Second derivatives for the natural (zero-curvature) cubic spline
+    γ_S = if n_γ > 2
+        T   = Tridiagonal(h_γ[2:end-1],
+                          [2(h_γ[i] + h_γ[i+1]) for i in 1:n_γ-2],
+                          h_γ[2:end-1])
+        rhs = [6 * ((γ_ys_sp[i+2] - γ_ys_sp[i+1]) / h_γ[i+1] -
+                    (γ_ys_sp[i+1] - γ_ys_sp[i])   / h_γ[i])
+               for i in 1:n_γ-2]
+        [0.0; T \ rhs; 0.0]
+    else
+        zeros(n_γ)
+    end
+
+    function γ_interp(t)
+        k = clamp(searchsortedlast(γ_xs_sp, t), 1, n_γ - 1)
+        a = (γ_xs_sp[k+1] - t) / h_γ[k]
+        b = (t - γ_xs_sp[k])   / h_γ[k]
+        return a * γ_ys_sp[k] + b * γ_ys_sp[k+1] +
+               ((a^3 - a) * γ_S[k] + (b^3 - b) * γ_S[k+1]) * h_γ[k]^2 / 6
+    end
+
+    values = [μ_fit + β_fit * (t - t_ref) + γ_interp(t) +
+              A_fit * sin(2π * t) + B_fit * cos(2π * t)
               for t in eval_times]
 
     # WLS covariance propagation for uncertainty (L2 system; approximate for L1)
@@ -186,12 +214,13 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
     std_vec = sqrt(σ̂²) .* sqrt.(dropdims(sum(abs2, V_out, dims=1), dims=1))
 
     return DimStack(
-        (values = DimArray(values,  Ti(out_dates)),
+        (signal = DimArray(values,  Ti(out_dates)),
          std    = DimArray(std_vec, Ti(out_dates)));
         metadata = Dict(
             :method                 => :sinusoid,
             :smoothness_interannual => smoothness_interannual,
             :loss_norm              => loss_norm,
+            :output_period    => output_period,
             :mean                   => μ_fit,
             :trend                  => β_fit,
             :amplitude              => seasonal_amplitude,

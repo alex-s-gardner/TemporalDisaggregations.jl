@@ -8,6 +8,6 @@ include("disaggregate_sinusoid.jl")
 include("disaggregate_gp.jl")
 include("disaggregate.jl")
 
-export disaggregate
+export disaggregate, decimal_year
 
 end

@@ -29,22 +29,22 @@ end
     # ─────────────────────────────────────────────────────────────────────────
     @testset "Helper: _decimal_year" begin
         # Jan 1 of any year → exact integer
-        @test TD._decimal_year(Date(2020, 1, 1)) == 2020.0
-        @test TD._decimal_year(Date(2000, 1, 1)) == 2000.0
+        @test TD.decimal_year(Date(2020, 1, 1)) == 2020.0
+        @test TD.decimal_year(Date(2000, 1, 1)) == 2000.0
 
         # Mid-year for a non-leap year (2019): day 182/365 ≈ 0.4986
         # July 2 is day 183, so fraction = 182/365
         d_mid = Date(2019, 7, 2)   # day 183 → offset 182
         expected = 2019.0 + 182.0 / 365.0
-        @test TD._decimal_year(d_mid) ≈ expected atol=1e-12
+        @test TD.decimal_year(d_mid) ≈ expected atol=1e-12
 
         # Leap year 2020: July 2 is day 184 → offset 183/366
         d_leap = Date(2020, 7, 2)
         expected_leap = 2020.0 + 183.0 / 366.0
-        @test TD._decimal_year(d_leap) ≈ expected_leap atol=1e-12
+        @test TD.decimal_year(d_leap) ≈ expected_leap atol=1e-12
 
         # DateTime variant: Jan 1 midnight
-        @test TD._decimal_year(DateTime(2021, 1, 1, 0, 0, 0)) == 2021.0
+        @test TD.decimal_year(DateTime(2021, 1, 1, 0, 0, 0)) == 2021.0
     end
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -162,12 +162,12 @@ end
             y = fill(5.0, 24)
             result = disaggregate(y, t1, t2; method = :spline, smoothness = 1e-8)
             @test result isa DimStack
-            @test result.values isa DimArray
+            @test result.signal isa DimArray
             @test result.std    isa DimArray
-            @test hasdim(result.values, Ti)
-            @test length(result.values) == length(result.std)
+            @test hasdim(result.signal, Ti)
+            @test length(result.signal) == length(result.std)
             # Mean of recovered signal should be close to 5.0
-            @test mean(result.values) ≈ 5.0 atol=0.1
+            @test mean(result.signal) ≈ 5.0 atol=0.1
             # std should be non-negative
             @test all(Array(result.std) .>= 0)
         end
@@ -177,7 +177,7 @@ end
             y = [3.0 + sin(2π * (i / 12.0)) for i in 1:24]
             r_l2 = disaggregate(y, t1, t2; method = :spline, loss_norm = :L2)
             r_l1 = disaggregate(y, t1, t2; method = :spline, loss_norm = :L1)
-            @test cor(Array(r_l2.values), Array(r_l1.values)) > 0.99
+            @test cor(Array(r_l2.signal), Array(r_l1.signal)) > 0.99
         end
 
         @testset "output_step = Day(1) produces finer grid" begin
@@ -185,8 +185,8 @@ end
             y = ones(12)
             r_monthly = disaggregate(y, t1, t2; method = :spline)
             r_daily   = disaggregate(y, t1, t2; method = :spline, output_step = Day(1))
-            @test length(r_daily.values) > length(r_monthly.values)
-            @test collect(dims(r_daily.values, Ti))[1] isa Date
+            @test length(r_daily.signal) > length(r_monthly.signal)
+            @test collect(dims(r_daily.signal, Ti))[1] isa Date
         end
 
         @testset "tension > 0 returns valid result" begin
@@ -194,11 +194,11 @@ end
             y = [sin(2π * i / 12) for i in 1:24]
             r_notension = disaggregate(y, t1, t2; method = :spline, tension = 0.0)
             r_tension   = disaggregate(y, t1, t2; method = :spline, tension = 5.0)
-            @test length(r_tension.values) == length(r_notension.values)
-            @test all(isfinite, r_tension.values)
+            @test length(r_tension.signal) == length(r_notension.signal)
+            @test all(isfinite, r_tension.signal)
             # High tension should reduce peak-to-peak range toward piecewise-linear behaviour
-            @test maximum(r_tension.values) - minimum(r_tension.values) <=
-                  maximum(r_notension.values) - minimum(r_notension.values) + 0.5
+            @test maximum(r_tension.signal) - minimum(r_tension.signal) <=
+                  maximum(r_notension.signal) - minimum(r_notension.signal) + 0.5
         end
     end
 
@@ -213,8 +213,8 @@ end
 
             # Compute exact interval averages for 36 monthly intervals
             t1_dates, t2_dates = make_monthly_intervals(Date(2018, 1, 1), 36)
-            t1_dec = TD._decimal_year.(t1_dates)
-            t2_dec = TD._decimal_year.(t2_dates)
+            t1_dec = TD.decimal_year.(t1_dates)
+            t2_dec = TD.decimal_year.(t2_dates)
 
             # Exact average of A*sin(2πt)+B*cos(2πt) over [t1,t2]
             y = [A_true * TD._interval_sin_integral(t1_dec[i], t2_dec[i]) +
@@ -244,7 +244,7 @@ end
             y = [2.0 + sin(2π * i / 12) for i in 1:24]
             r_l2 = disaggregate(y, t1, t2; method = :sinusoid, loss_norm = :L2)
             r_l1 = disaggregate(y, t1, t2; method = :sinusoid, loss_norm = :L1)
-            @test cor(Array(r_l2.values), Array(r_l1.values)) > 0.99
+            @test cor(Array(r_l2.signal), Array(r_l1.signal)) > 0.99
         end
 
         @testset "output_step = Day(1)" begin
@@ -252,17 +252,17 @@ end
             y = ones(12)
             r_monthly = disaggregate(y, t1, t2; method = :sinusoid)
             r_daily   = disaggregate(y, t1, t2; method = :sinusoid, output_step = Day(1))
-            @test length(r_daily.values) > length(r_monthly.values)
-            @test all(isfinite, r_daily.values)
+            @test length(r_daily.signal) > length(r_monthly.signal)
+            @test all(isfinite, r_daily.signal)
         end
 
         @testset "Return fields present" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             result = disaggregate(ones(12), t1, t2; method = :sinusoid)
             @test result isa DimStack
-            @test result.values isa DimArray
+            @test result.signal isa DimArray
             @test result.std    isa DimArray
-            @test hasdim(result.values, Ti)
+            @test hasdim(result.signal, Ti)
             @test haskey(metadata(result), :mean)
             @test haskey(metadata(result), :trend)
             @test haskey(metadata(result), :amplitude)
@@ -282,12 +282,12 @@ end
             y = [sin(2π * i / 12) for i in 1:24]
             result = disaggregate(y, t1, t2; method = :gp, obs_noise = 0.1)
             @test result isa DimStack
-            @test result.values isa DimArray
+            @test result.signal isa DimArray
             @test result.std    isa DimArray
-            @test hasdim(result.values, Ti)
-            @test length(result.values) == length(result.std)
+            @test hasdim(result.signal, Ti)
+            @test length(result.signal) == length(result.std)
             @test all(Array(result.std) .>= 0.0)
-            @test all(isfinite, result.values)
+            @test all(isfinite, result.signal)
             @test all(isfinite, result.std)
         end
 
@@ -297,9 +297,9 @@ end
             r_monthly = disaggregate(y, t1, t2; method = :gp, obs_noise = 0.1)
             r_daily   = disaggregate(y, t1, t2; method = :gp, obs_noise = 0.1,
                                      output_step = Day(1))
-            @test length(r_daily.values) > length(r_monthly.values)
+            @test length(r_daily.signal) > length(r_monthly.signal)
             @test all(Array(r_daily.std) .>= 0.0)
-            @test all(isfinite, r_daily.values)
+            @test all(isfinite, r_daily.signal)
         end
 
         @testset "Posterior mean close to true signal" begin
@@ -308,7 +308,7 @@ end
             c = 7.5
             y = fill(c, 36)
             result = disaggregate(y, t1, t2; method = :gp, obs_noise = 1e-6)
-            @test mean(result.values) ≈ c atol=1.0
+            @test mean(result.signal) ≈ c atol=1.0
         end
 
         @testset "L1 loss returns valid result" begin
@@ -317,7 +317,7 @@ end
             result = disaggregate(y, t1, t2; method = :gp, obs_noise = 0.1,
                                   loss_norm = :L1)
             @test all(Array(result.std) .>= 0.0)
-            @test all(isfinite, result.values)
+            @test all(isfinite, result.signal)
         end
     end
 
@@ -331,14 +331,14 @@ end
         r_sin    = disaggregate(y, t1, t2; method = :sinusoid)
         r_gp     = disaggregate(y, t1, t2; method = :gp)
 
-        @test r_spline isa DimStack && hasdim(r_spline.values, Ti)
+        @test r_spline isa DimStack && hasdim(r_spline.signal, Ti)
         @test haskey(metadata(r_sin), :mean)
         @test r_gp.std isa DimArray
 
         # Default method is :spline — returns DimStack with std
         r_default = disaggregate(y, t1, t2)
         @test r_default isa DimStack
-        @test hasdim(r_default.values, Ti)
+        @test hasdim(r_default.signal, Ti)
         @test r_default.std isa DimArray
     end
 
