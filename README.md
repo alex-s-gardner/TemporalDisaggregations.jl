@@ -157,6 +157,18 @@ result = disaggregate(y, t1, t2; method = :gp, loss_norm = :L1, obs_noise = 4.0)
 
 All methods return a `DimStack` (from [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl)) with two layers:
 
+> **Note: `std` values are not directly comparable across methods.**
+> Each method derives uncertainty differently, so the magnitude and shape of `std` reflects the method's statistical framework rather than a universal measure of confidence:
+>
+> | Method | `std` interpretation | Key caveat |
+> |--------|---------------------|------------|
+> | **GP** | Bayesian posterior SD — exact marginal uncertainty given the GP prior and data | Depends strongly on the prior kernel and `obs_noise`; can be over- or under-confident if the kernel is mis-specified |
+> | **Spline** | Frequentist P-spline confidence band — propagated from the hat-matrix of the regularised normal equations | Conditional on `smoothness` (λ); does not capture model misspecification or uncertainty in λ itself |
+> | **Sinusoid** | Frequentist WLS prediction SE — propagated from the covariance of the fitted parametric coefficients | Conditional on the parametric model being correctly specified (mean + trend + sinusoid); underestimates uncertainty when the true signal departs from this form |
+>
+> For all methods, `std` is approximate when `loss_norm = :L1` (uncertainty is computed from the L2 system at the IRLS-converged solution).
+
+
 ```julia
 result.values    # DimArray — posterior mean on the output Ti(dates) grid
 result.std       # DimArray — posterior standard deviation (same grid)
