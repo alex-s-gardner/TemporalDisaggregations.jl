@@ -63,6 +63,23 @@ result = disaggregate(y, t1, t2;
 
 **Uncertainty:** Frequentist P-spline confidence band derived from the hat-matrix trace of the regularised normal equations.
 
+![B-spline reconstruction](docs/images/spline_detail.png)
+
+### Tension-spline (`method = :spline`, `tension > 0`)
+
+A tension penalty `τ² ‖D₂ a‖²` is added alongside the standard curvature penalty. This stiffens the spline in data-sparse regions, suppressing oscillation while preserving fidelity where observations are dense.
+
+```julia
+result = disaggregate(y, t1, t2;
+    method     = :spline,
+    smoothness = 1e-3,
+    tension    = 10.0,    # 0.5–1 moderate; 5–10 near piecewise-linear
+    loss_norm  = :L2,
+)
+```
+
+![Tension-spline reconstruction](docs/images/tension_spline_detail.png)
+
 ### Sinusoid (`method = :sinusoid`)
 
 Fits the parametric model
@@ -90,6 +107,8 @@ md[:interannual]  # Dict{Int,Float64} of per-year anomalies
 ```
 
 **Uncertainty:** WLS covariance propagation from the regularised normal equations.
+
+![Sinusoid reconstruction](docs/images/sinusoid_detail.png)
 
 ### Gaussian Process (`method = :gp`)
 

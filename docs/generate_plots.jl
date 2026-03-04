@@ -98,3 +98,75 @@ axislegend(ax2b; position = :lt, framevisible = true, labelsize = 11)
 
 save("docs/images/gp_detail.png", fig2, px_per_unit = 2)
 println("Saved gp_detail.png")
+
+# ── Also need tension-spline and sinusoid std ──────────────────────────────────
+r_tension = disaggregate(y, t1, t2; method = :spline, smoothness = 1e-3, tension = 10.0)
+
+sp_σ      = Float64[r_spline.values[i]  for i in 1:n_out]   # reuse sp_μ alias
+sp_std    = Float64[r_spline.std[i]     for i in 1:n_out]
+ten_μ     = Float64[r_tension.values[i] for i in 1:n_out]
+ten_std   = Float64[r_tension.std[i]    for i in 1:n_out]
+sin_std   = Float64[r_sin.std[i]        for i in 1:n_out]
+
+# ── Figure 3: B-spline detail ─────────────────────────────────────────────────
+fig3 = Figure(size = (900, 420), fontsize = 13)
+
+ax3a = Axis(fig3[1, 1]; xlabel = "Year", ylabel = "Signal",
+    title = "Input: overlapping interval averages")
+linesegments!(ax3a, vcat(collect(zip(pt1, pt2))...);
+    color = (:steelblue, 0.6), linewidth = 2.5, label = "Interval averages")
+lines!(ax3a, t, signal; color = (:black, 0.25), linewidth = 1, label = "True signal")
+axislegend(ax3a; position = :lt, framevisible = true, labelsize = 11)
+
+ax3b = Axis(fig3[1, 2]; xlabel = "Year", ylabel = "Signal",
+    title = "Output: B-spline mean ± 2σ")
+band!(ax3b, t_monthly, sp_μ .- 2 .* sp_std, sp_μ .+ 2 .* sp_std;
+    color = (:steelblue, 0.2), label = "± 2σ")
+lines!(ax3b, t_monthly, sp_μ; color = :steelblue, linewidth = 2.5, label = "B-spline mean")
+lines!(ax3b, t, signal; color = (:black, 0.25), linewidth = 1, label = "True signal")
+axislegend(ax3b; position = :lt, framevisible = true, labelsize = 11)
+
+save("docs/images/spline_detail.png", fig3, px_per_unit = 2)
+println("Saved spline_detail.png")
+
+# ── Figure 4: Tension-spline detail ───────────────────────────────────────────
+fig4 = Figure(size = (900, 420), fontsize = 13)
+
+ax4a = Axis(fig4[1, 1]; xlabel = "Year", ylabel = "Signal",
+    title = "Input: overlapping interval averages")
+linesegments!(ax4a, vcat(collect(zip(pt1, pt2))...);
+    color = (:purple, 0.6), linewidth = 2.5, label = "Interval averages")
+lines!(ax4a, t, signal; color = (:black, 0.25), linewidth = 1, label = "True signal")
+axislegend(ax4a; position = :lt, framevisible = true, labelsize = 11)
+
+ax4b = Axis(fig4[1, 2]; xlabel = "Year", ylabel = "Signal",
+    title = "Output: tension-spline mean ± 2σ  (tension = 10)")
+band!(ax4b, t_monthly, ten_μ .- 2 .* ten_std, ten_μ .+ 2 .* ten_std;
+    color = (:purple, 0.2), label = "± 2σ")
+lines!(ax4b, t_monthly, ten_μ; color = :purple, linewidth = 2.5, label = "Tension-spline mean")
+lines!(ax4b, t, signal; color = (:black, 0.25), linewidth = 1, label = "True signal")
+axislegend(ax4b; position = :lt, framevisible = true, labelsize = 11)
+
+save("docs/images/tension_spline_detail.png", fig4, px_per_unit = 2)
+println("Saved tension_spline_detail.png")
+
+# ── Figure 5: Sinusoid detail ─────────────────────────────────────────────────
+fig5 = Figure(size = (900, 420), fontsize = 13)
+
+ax5a = Axis(fig5[1, 1]; xlabel = "Year", ylabel = "Signal",
+    title = "Input: overlapping interval averages")
+linesegments!(ax5a, vcat(collect(zip(pt1, pt2))...);
+    color = (:darkorange, 0.6), linewidth = 2.5, label = "Interval averages")
+lines!(ax5a, t, signal; color = (:black, 0.25), linewidth = 1, label = "True signal")
+axislegend(ax5a; position = :lt, framevisible = true, labelsize = 11)
+
+ax5b = Axis(fig5[1, 2]; xlabel = "Year", ylabel = "Signal",
+    title = "Output: sinusoid mean ± 2σ")
+band!(ax5b, t_monthly, sin_μ .- 2 .* sin_std, sin_μ .+ 2 .* sin_std;
+    color = (:darkorange, 0.2), label = "± 2σ")
+lines!(ax5b, t_monthly, sin_μ; color = :darkorange, linewidth = 2.5, label = "Sinusoid mean")
+lines!(ax5b, t, signal; color = (:black, 0.25), linewidth = 1, label = "True signal")
+axislegend(ax5b; position = :lt, framevisible = true, labelsize = 11)
+
+save("docs/images/sinusoid_detail.png", fig5, px_per_unit = 2)
+println("Saved sinusoid_detail.png")
