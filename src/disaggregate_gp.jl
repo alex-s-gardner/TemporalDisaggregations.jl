@@ -62,11 +62,15 @@ For a 5-year record (m ≈ 60), this is ~10⁵× faster than the O(n³) dense so
 - `loss_norm`: Loss function for the data-fit term. `:L2` (default) minimises the
   weighted sum of squared residuals. `:L1` uses Iteratively Reweighted Least Squares
   (IRLS) to minimise the sum of absolute residuals, which is more robust to outliers.
+- `output_step`: Temporal resolution of the output grid as a `Dates.Period`
+  (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`. Inducing points are
+  always kept on a monthly grid regardless of this setting; when `output_step ≠ Month(1)`
+  the posterior is predicted at the output grid via an additional O(m²) kriging step.
 
 # Returns
 Named tuple `(dates, values, std)`:
-- `dates`: `Vector{Date}` on a monthly grid spanning the data domain.
-- `values`: Posterior mean of x(t) at `dates` (= μ_Z at inducing points).
+- `dates`: `Vector{Date}` on a grid spanning the data domain at `output_step` resolution.
+- `values`: Posterior mean of x(t) at `dates`.
 - `std`: Posterior standard deviation of x(t) at `dates`.
 
 # Example
@@ -83,7 +87,8 @@ function disaggregate_gp(aggregate_values::AbstractVector,
                             kernel    = with_lengthscale(Matern52Kernel(), 1/6),
                             obs_noise::Real = 1.0,
                             n_quad::Int = 5,
-                            loss_norm::Symbol = :L2)
+                            loss_norm::Symbol = :L2,
+                            output_step::Dates.Period = Month(1))
 
     σ²  = Float64(obs_noise)
     n   = length(aggregate_values)
@@ -102,9 +107,12 @@ function disaggregate_gp(aggregate_values::AbstractVector,
     t2    = Float64.(interval_end[order])
     y     = Float64.(aggregate_values[order])
 
-    # ── Monthly inducing / output grid ────────────────────────────────────────
-    monthly_dates, Z = _monthly_decimal_year_grid(t1[1], t2[end])
+    # ── Monthly inducing grid (always monthly for O(m³) tractability) ─────────
+    _, Z = _monthly_decimal_year_grid(t1[1], t2[end])
     m = length(Z)
+
+    # ── Output grid (may differ from inducing grid) ────────────────────────────
+    out_dates, Z_out = _date_grid(t1[1], t2[end], output_step)
 
     # ── Gauss-Legendre quadrature ─────────────────────────────────────────────
     # GL weights sum to 2 on [−1, 1]; dividing by 2 gives a mean-approximation
@@ -167,9 +175,26 @@ function disaggregate_gp(aggregate_values::AbstractVector,
     K_diag   = kernelmatrix_diag(kernel, Z)   # [m]
     post_var = K_diag .- vec(sum(S_W .* R_mat, dims=1))
 
-    return (
-        dates  = monthly_dates,
-        values = μ_Z,
-        std    = sqrt.(max.(0.0, post_var)),
-    )
+    if output_step == Month(1)
+        return (
+            dates  = out_dates,
+            values = μ_Z,
+            std    = sqrt.(max.(0.0, post_var)),
+        )
+    else
+        # Kriging prediction at arbitrary output grid via an extra O(m²) solve.
+        # μ_out = K_out_Z K_ZZ⁻¹ μ_Z
+        # Var_out[k] = K_out[k,k] − (S_W M_W'⁻¹ K_out^T)_columnsum[k]
+        K_out_Z      = kernelmatrix(kernel, Z_out, Z)            # [n_out × m]
+        L_K          = cholesky(Symmetric(Matrix(K)))             # K_ZZ Cholesky
+        μ_out        = K_out_Z * (L_K \ μ_Z)                    # [n_out]
+        R_out        = L_M \ K_out_Z'                            # [m × n_out]
+        K_diag_out   = kernelmatrix_diag(kernel, Z_out)
+        post_var_out = K_diag_out .- vec(sum(S_W .* R_out, dims=1))
+        return (
+            dates  = out_dates,
+            values = μ_out,
+            std    = sqrt.(max.(0.0, post_var_out)),
+        )
+    end
 end

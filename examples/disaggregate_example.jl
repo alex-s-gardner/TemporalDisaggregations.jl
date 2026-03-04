@@ -6,6 +6,7 @@ begin
 # (disaggregation_gp). Both recover an instantaneous signal from random overlapping
 # interval averages mimicking ITS_LIVE image-pair velocity measurements.
 begin
+    using TemporaryDisaggregations
     using KernelFunctions # kernel definitions
     using CairoMakie
     using DimensionalData
@@ -110,6 +111,14 @@ k           = k_seasonal + k_trend + k_shortterm
     n_quad    = 5,
 )
 
+# ── 5b. Daily output (demonstrates output_step) ───────────────────────────────
+@time result_daily = disaggregate(y_blundered, t1, t2;
+    method      = :spline,
+    smoothness  = 1e-3,
+    loss_norm   = :L1,
+    output_step = Day(1),
+)
+
 # ── 6. Plot ───────────────────────────────────────────────────────────────────
 begin
     fig = Figure(size = (1100, 600))
@@ -156,6 +165,12 @@ begin
     lines!(ax, t_sin, result_sin.values;
            color = :darkorange, linewidth = 2, linestyle = :dot,
            label = "Sinusoid")
+
+    # Daily spline reconstruction (thin overlay to show sub-monthly detail)
+    t_daily_out = [year(d) + (dayofyear(d) - 1) / (isleapyear(year(d)) ? 366.0 : 365.0)
+                   for d in result_daily.dates]
+    lines!(ax, t_daily_out, result_daily.values;
+           color = (:steelblue, 0.4), linewidth = 1, label = "B-spline (daily)")
 
     # GP reconstruction: posterior mean ± 2σ band
     t_gp = [year(d) + (month(d) - 1) / 12.0 for d in result_gp.dates]

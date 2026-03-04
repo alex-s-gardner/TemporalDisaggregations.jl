@@ -50,6 +50,24 @@ function _monthly_decimal_year_grid(t_min::Real, t_max::Real)
 end
 
 """
+    _date_grid(t_min, t_max, step)
+
+Return `(dates, decimal_years)` for a `Date` grid covering `[t_min, t_max]` with the
+given `step` (any `Dates.Period`), where both bounds are decimal years.
+"""
+function _date_grid(t_min::Real, t_max::Real, step::Dates.Period)
+    yr0 = floor(Int, t_min); ndays0 = isleapyear(yr0) ? 366 : 365
+    d_start = Date(yr0, 1, 1) + Day(floor(Int, (t_min - yr0) * ndays0))
+    yr1 = floor(Int, t_max); ndays1 = isleapyear(yr1) ? 366 : 365
+    d_end   = Date(yr1, 1, 1) + Day(floor(Int, (t_max - yr1) * ndays1))
+    dates = collect(d_start:step:d_end)
+    times = Float64[let yr = year(d)
+        yr + (d - Date(yr, 1, 1)).value / (isleapyear(yr) ? 366.0 : 365.0)
+    end for d in dates]
+    return dates, times
+end
+
+"""
     disaggregate_spline(aggregate_values, interval_start, interval_end;
                    smoothness=1e-3, outlier_rejection=false,
                    n_knots=nothing, penalty_order=3, tension=0.0, loss_norm=:L2)
@@ -86,10 +104,13 @@ formulation naturally handles overlapping, gapped, and out-of-order intervals.
 - `loss_norm`: Loss function for the data-fit term. `:L2` (default) minimises the
   weighted sum of squared residuals. `:L1` uses Iteratively Reweighted Least Squares
   (IRLS) to minimise the sum of absolute residuals, which is more robust to outliers.
+- `output_step`: Temporal resolution of the output grid as a `Dates.Period`
+  (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`.
 
 # Returns
-Named tuple `(dates, values)` where `dates` is a `Vector{Date}` on a monthly grid spanning
-the data domain and `values` is the reconstructed instantaneous signal at those dates.
+Named tuple `(dates, values)` where `dates` is a `Vector{Date}` on a grid spanning
+the data domain at `output_step` resolution and `values` is the reconstructed
+instantaneous signal at those dates.
 """
 function disaggregate_spline(aggregate_values::AbstractVector,
                         interval_start::AbstractVector,
@@ -99,7 +120,8 @@ function disaggregate_spline(aggregate_values::AbstractVector,
                         n_knots::Union{Int, Nothing} = nothing,
                         penalty_order::Int = 3,
                         tension::Real = 0.0,
-                        loss_norm::Symbol = :L2)
+                        loss_norm::Symbol = :L2,
+                        output_step::Dates.Period = Month(1))
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -200,11 +222,11 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     # Instantaneous signal: x(t) = F′(t) = Σⱼ aⱼ B′ⱼ(t)
     dP_F = BasicBSpline.derivative(P_F)
 
-    # Evaluate on a monthly grid clamped to the data domain
-    monthly_dates, eval_times = _monthly_decimal_year_grid(t_nodes[1], t_nodes[end])
+    # Evaluate on the output grid clamped to the data domain
+    out_dates, eval_times = _date_grid(t_nodes[1], t_nodes[end], output_step)
     eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
 
     values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:m) for t in eval_times]
 
-    return (dates = monthly_dates, values = values)
+    return (dates = out_dates, values = values)
 end

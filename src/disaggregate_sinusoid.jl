@@ -73,10 +73,12 @@ The inter-annual anomalies are L2-regularised toward zero with strength
 - `loss_norm`: Loss function for the data-fit term. `:L2` (default) minimises the
   weighted sum of squared residuals. `:L1` uses Iteratively Reweighted Least Squares
   (IRLS) to minimise the sum of absolute residuals, which is more robust to outliers.
+- `output_step`: Temporal resolution of the output grid as a `Dates.Period`
+  (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`.
 
 # Returns
 Named tuple with fields:
-- `dates`        — `Vector{Date}` on a monthly grid spanning the data domain.
+- `dates`        — `Vector{Date}` on a grid spanning the data domain at `output_step` resolution.
 - `values`       — Reconstructed instantaneous signal at `dates`.
 - `mean`         — Fitted overall mean μ.
 - `trend`        — Linear trend β (units/yr).
@@ -90,7 +92,8 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
                                  smoothness_interannual::Real = 1e-2,
                                  obs_noise::Real              = 1.0,
                                  outlier_rejection::Bool      = false,
-                                 loss_norm::Symbol            = :L2)
+                                 loss_norm::Symbol            = :L2,
+                                 output_step::Dates.Period    = Month(1))
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -174,8 +177,8 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
     # Peak of A·sin(2πt)+B·cos(2πt) is at t where d/dt = 0 → tan(2πt) = B/A
     seasonal_phase     = mod(atan(B_fit, A_fit) / (2π), 1.0)
 
-    # ── Evaluate on monthly grid ──────────────────────────────────────────────
-    monthly_dates, eval_times = _monthly_decimal_year_grid(t1[1], t2[end])
+    # ── Evaluate on output grid ───────────────────────────────────────────────
+    out_dates, eval_times = _date_grid(t1[1], t2[end], output_step)
 
     values = [(μ_fit + β_fit * (t - t_ref)
                + get(γ_dict, floor(Int, t), 0.0)
@@ -184,7 +187,7 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
               for t in eval_times]
 
     return (
-        dates        = monthly_dates,
+        dates        = out_dates,
         values       = values,
         mean         = μ_fit,
         trend        = β_fit,
