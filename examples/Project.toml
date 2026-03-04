@@ -1,0 +1,13 @@
+name = "TemporalDisaggregationsExamples"
+
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
+KernelFunctions = "ec8451be-7e33-11e9-00cf-bbf324bd1392"
+TemporalDisaggregations = "88cf798b-2db9-4742-8b85-510f6e476edb"
+
+[compat]
+CairoMakie = "0.15"
+DimensionalData = "0.29, 0.30"
+KernelFunctions = "0.10"
+julia = "1.10"

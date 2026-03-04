@@ -52,8 +52,8 @@ For a 5-year record (m ≈ 60), this is ~10⁵× faster than the O(n³) dense so
 
 # Arguments
 - `aggregate_values`: Vector of n observed interval averages.
-- `interval_start`: Interval start times as decimal years (e.g. `2020.0`).
-- `interval_end`: Interval end times as decimal years.
+- `interval_start`: Interval start times as `Date` or `DateTime` values.
+- `interval_end`: Interval end times as `Date` or `DateTime` values.
 - `kernel`: KernelFunctions.jl kernel for the GP prior on x(t). Sums and products of
   kernels are fully supported. Default: Matérn-5/2 with a 2-month length-scale.
 - `obs_noise`: Observation noise variance σ² ≥ 0.
@@ -68,10 +68,8 @@ For a 5-year record (m ≈ 60), this is ~10⁵× faster than the O(n³) dense so
   the posterior is predicted at the output grid via an additional O(m²) kriging step.
 
 # Returns
-Named tuple `(dates, values, std)`:
-- `dates`: `Vector{Date}` on a grid spanning the data domain at `output_step` resolution.
-- `values`: Posterior mean of x(t) at `dates`.
-- `std`: Posterior standard deviation of x(t) at `dates`.
+`DimStack` with layers `values` and `std`, both `DimArray` with a `Ti(dates)` dimension.
+`metadata(result)` returns `Dict(:method => :gp)`.
 
 # Example
 ```julia
@@ -82,8 +80,8 @@ band(result.dates, result.values .- 2result.std, result.values .+ 2result.std)
 ```
 """
 function disaggregate_gp(aggregate_values::AbstractVector,
-                            interval_start::AbstractVector,
-                            interval_end::AbstractVector;
+                            interval_start::AbstractVector{<:Dates.TimeType},
+                            interval_end::AbstractVector{<:Dates.TimeType};
                             kernel    = with_lengthscale(Matern52Kernel(), 1/6),
                             obs_noise::Real = 1.0,
                             n_quad::Int = 5,
@@ -98,21 +96,24 @@ function disaggregate_gp(aggregate_values::AbstractVector,
     any(interval_end .<= interval_start) &&
         throw(ArgumentError(
             "Every interval must satisfy interval_end > interval_start."))
+    obs_noise >= 0 ||
+        throw(ArgumentError("obs_noise must be ≥ 0."))
     n_quad >= 3 || throw(ArgumentError("n_quad must be ≥ 3."))
     loss_norm ∈ (:L1, :L2) ||
         throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
 
     order = sortperm(interval_start)
-    t1    = Float64.(interval_start[order])
-    t2    = Float64.(interval_end[order])
+    t1    = _decimal_year.(interval_start[order])
+    t2    = _decimal_year.(interval_end[order])
     y     = Float64.(aggregate_values[order])
 
     # ── Monthly inducing grid (always monthly for O(m³) tractability) ─────────
-    _, Z = _monthly_decimal_year_grid(t1[1], t2[end])
+    monthly_dates, Z = _monthly_decimal_year_grid(t1[1], t2[end])
     m = length(Z)
 
     # ── Output grid (may differ from inducing grid) ────────────────────────────
-    out_dates, Z_out = _date_grid(t1[1], t2[end], output_step)
+    out_dates, Z_out = output_step == Month(1) ?
+        (monthly_dates, Z) : _date_grid(t1[1], t2[end], output_step)
 
     # ── Gauss-Legendre quadrature ─────────────────────────────────────────────
     # GL weights sum to 2 on [−1, 1]; dividing by 2 gives a mean-approximation
@@ -137,13 +138,13 @@ function disaggregate_gp(aggregate_values::AbstractVector,
     # Σ_y = C K⁻¹ Cᵀ + σ²I  [n × n, never formed]
     # Woodbury: Σ_y⁻¹ = I/σ² − C M'⁻¹ Cᵀ / σ²   where M' = K σ² + CᵀC
 
-    S_W    = C' * C                                   # [m × m]  (updated by IRLS for L1)
-    M_W    = Symmetric(Matrix(K) .* σ² .+ S_W)       # [m × m]
+    S_W    = C' * C                           # [m × m]  (updated by IRLS for L1)
+    M_W    = Symmetric(K .* σ² .+ S_W)       # [m × m]
     L_M    = cholesky(M_W)
 
-    Cty    = C' * y                                   # [m]
-    v      = L_M \ Cty                                # M'⁻¹ Cᵀy  [m]
-    μ_Z    = (Cty .- S_W * v) ./ σ²                  # [m]
+    Cty    = C' * y                           # [m]
+    v      = L_M \ Cty                        # M'⁻¹ Cᵀy  [m]
+    μ_Z    = (Cty .- S_W * v) ./ σ²          # [m]
 
     # ── L1: IRLS refinement (skipped for :L2) ─────────────────────────────────
     # Replace W=I with per-obs weights w_irls[i] = 1/(|r_i|+ε), iterate to convergence.
@@ -152,17 +153,16 @@ function disaggregate_gp(aggregate_values::AbstractVector,
         ε_irls = 1e-6 * (std(y) + 1e-10)
         w_irls = ones(n)
         for _ in 1:50
-            W_eff  = Diagonal(w_irls)
-            S_W    = C' * W_eff * C
-            M_W    = Symmetric(Matrix(K) .* σ² .+ S_W)
-            L_M    = cholesky(M_W)
-            CtWy   = C' * W_eff * y
-            v      = L_M \ CtWy
+            W_eff      = Diagonal(w_irls)
+            S_W        = C' * W_eff * C
+            M_W        = Symmetric(K .* σ² .+ S_W)
+            L_M        = cholesky(M_W)
+            CtWy       = C' * W_eff * y
+            v          = L_M \ CtWy
             μ_Z_new    = (CtWy .- S_W * v) ./ σ²
-            r          = y .- C * v   # predicted interval averages = C K⁻¹ μ_Z = C v
-            w_irls_new = 1.0 ./ (abs.(r) .+ ε_irls)
-            norm(w_irls_new - w_irls) / (norm(w_irls) + 1e-10) < 1e-8 &&
-                (μ_Z = μ_Z_new; break)
+            r          = y .- C * v
+            w_irls_new = _irls_weights(r, ε_irls)
+            _irls_converged(w_irls_new, w_irls) && (μ_Z = μ_Z_new; break)
             w_irls = w_irls_new
             μ_Z = μ_Z_new
         end
@@ -173,28 +173,42 @@ function disaggregate_gp(aggregate_values::AbstractVector,
     # = K_diag − diag(S_W R)  where R = M_W'⁻¹ K
     R_mat    = L_M \ Matrix(K)                # M_W'⁻¹ K  [m × m]
     K_diag   = kernelmatrix_diag(kernel, Z)   # [m]
-    post_var = K_diag .- vec(sum(S_W .* R_mat, dims=1))
+    post_var = K_diag .- dropdims(sum(S_W .* R_mat, dims=1), dims=1)
 
     if output_step == Month(1)
-        return (
-            dates  = out_dates,
-            values = μ_Z,
-            std    = sqrt.(max.(0.0, post_var)),
+        return DimStack(
+            (values = DimArray(μ_Z,                        Ti(out_dates)),
+             std    = DimArray(sqrt.(max.(0.0, post_var)), Ti(out_dates)));
+            metadata = Dict(
+                :method      => :gp,
+                :kernel      => kernel,
+                :obs_noise   => obs_noise,
+                :n_quad      => n_quad,
+                :loss_norm   => loss_norm,
+            )
         )
     else
         # Kriging prediction at arbitrary output grid via an extra O(m²) solve.
         # μ_out = K_out_Z K_ZZ⁻¹ μ_Z
         # Var_out[k] = K_out[k,k] − (S_W M_W'⁻¹ K_out^T)_columnsum[k]
         K_out_Z      = kernelmatrix(kernel, Z_out, Z)            # [n_out × m]
-        L_K          = cholesky(Symmetric(Matrix(K)))             # K_ZZ Cholesky
+        L_K          = cholesky(K)                                # K_ZZ Cholesky
         μ_out        = K_out_Z * (L_K \ μ_Z)                    # [n_out]
         R_out        = L_M \ K_out_Z'                            # [m × n_out]
         K_diag_out   = kernelmatrix_diag(kernel, Z_out)
-        post_var_out = K_diag_out .- vec(sum(S_W .* R_out, dims=1))
-        return (
-            dates  = out_dates,
-            values = μ_out,
-            std    = sqrt.(max.(0.0, post_var_out)),
+        # DTC predictive variance: K_diag_out - diag(K_out_Z * M_W^{-1} * K_Z_out)
+        # diag(A B) = sum(A .* B', dims=2) for A [n×m] and B [m×n]
+        post_var_out = K_diag_out .- dropdims(sum(K_out_Z .* R_out', dims=2), dims=2)
+        return DimStack(
+            (values = DimArray(μ_out,                            Ti(out_dates)),
+             std    = DimArray(sqrt.(max.(0.0, post_var_out)),   Ti(out_dates)));
+            metadata = Dict(
+                :method      => :gp,
+                :kernel      => kernel,
+                :obs_noise   => obs_noise,
+                :n_quad      => n_quad,
+                :loss_norm   => loss_norm,
+            )
         )
     end
 end

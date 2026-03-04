@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "19f5fcc7c66007124b2ac20cc4b9238dff05f1a8"
+project_hash = "1a6b78c0ab12fb6e104bff0e256dbd8834b243bf"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1425,7 +1425,7 @@ uuid = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
 version = "1.10.0"
 
 [[deps.TemporalDisaggregation]]
-deps = ["AbstractGPs", "BasicBSpline", "CairoMakie", "Dates", "FastGaussQuadrature", "KernelFunctions", "LinearAlgebra", "Statistics"]
+deps = ["AbstractGPs", "BasicBSpline", "Dates", "DimensionalData", "FastGaussQuadrature", "KernelFunctions", "LinearAlgebra", "Statistics"]
 path = "."
 uuid = "88cf798b-2db9-4742-8b85-510f6e476edb"
 version = "0.1.0"

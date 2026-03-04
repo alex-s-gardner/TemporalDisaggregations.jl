@@ -37,8 +37,6 @@ end
 """
     disaggregate_sinusoid(aggregate_values, interval_start, interval_end;
                             smoothness_interannual = 1e-2,
-                            obs_noise              = 1.0,
-                            outlier_rejection      = false,
                             loss_norm              = :L2)
 
 Reconstruct an instantaneous time series from interval-averaged observations by fitting
@@ -66,10 +64,8 @@ The inter-annual anomalies are L2-regularised toward zero with strength
 
 # Arguments
 - `aggregate_values`: Vector of n observed averages over each time interval.
-- `interval_start`, `interval_end`: Interval boundaries as decimal years.
+- `interval_start`, `interval_end`: Interval boundaries as `Date` or `DateTime` values.
 - `smoothness_interannual`: Ridge penalty on inter-annual anomalies γ. Default `1e-2`.
-- `obs_noise`: Observation noise variance σ² used for outlier down-weighting. Default `1.0`.
-- `outlier_rejection`: If `true`, intervals with |y−ȳ| > 2.5σ are down-weighted by ×0.1.
 - `loss_norm`: Loss function for the data-fit term. `:L2` (default) minimises the
   weighted sum of squared residuals. `:L1` uses Iteratively Reweighted Least Squares
   (IRLS) to minimise the sum of absolute residuals, which is more robust to outliers.
@@ -77,21 +73,14 @@ The inter-annual anomalies are L2-regularised toward zero with strength
   (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`.
 
 # Returns
-Named tuple with fields:
-- `dates`        — `Vector{Date}` on a grid spanning the data domain at `output_step` resolution.
-- `values`       — Reconstructed instantaneous signal at `dates`.
-- `mean`         — Fitted overall mean μ.
-- `trend`        — Linear trend β (units/yr).
-- `amplitude`    — Seasonal amplitude √(A²+B²).
-- `phase`        — Fractional year of seasonal peak (e.g. 0.5 = mid-year).
-- `interannual`  — `Dict{Int,Float64}` mapping calendar year → anomaly γ.
+`DimStack` with layers `values` and `std`, both `DimArray` with a `Ti(dates)` dimension.
+`metadata(result)` returns a `Dict` with keys `:method`, `:mean`, `:trend`, `:amplitude`,
+`:phase`, and `:interannual`. Uncertainty is WLS covariance propagation; approximate for `:L1`.
 """
 function disaggregate_sinusoid(aggregate_values::AbstractVector,
-                                 interval_start::AbstractVector,
-                                 interval_end::AbstractVector;
+                                 interval_start::AbstractVector{<:Dates.TimeType},
+                                 interval_end::AbstractVector{<:Dates.TimeType};
                                  smoothness_interannual::Real = 1e-2,
-                                 obs_noise::Real              = 1.0,
-                                 outlier_rejection::Bool      = false,
                                  loss_norm::Symbol            = :L2,
                                  output_step::Dates.Period    = Month(1))
 
@@ -107,19 +96,9 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
 
     # Sort chronologically
     order = sortperm(interval_start)
-    t1    = Float64.(interval_start[order])
-    t2    = Float64.(interval_end[order])
+    t1    = _decimal_year.(interval_start[order])
+    t2    = _decimal_year.(interval_end[order])
     y     = Float64.(aggregate_values[order])
-
-    # Observation weights
-    w = ones(n)
-    if outlier_rejection
-        μ_y, σ_y = mean(y), std(y)
-        for i in 1:n
-            abs(y[i] - μ_y) > 2.5σ_y && (w[i] = 0.1)
-        end
-    end
-    W = Diagonal(w)
 
     # ── Parameter layout ──────────────────────────────────────────────────────
     # θ = [μ,  β,  γ_yr1, …, γ_yrK,  A,  B]
@@ -152,16 +131,17 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
 
     # ── Weighted least-squares solve ──────────────────────────────────────────
     ε_irls = 1e-6 * (std(y) + 1e-10)
-    DᵀW = D' * W
-    θ   = (DᵀW * D + Λ) \ (DᵀW * y)                # L2 init
+    DᵀD = D' * D
+    θ   = (DᵀD + Λ) \ (D' * y)                  # L2 init
     if loss_norm == :L1
+        w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
             r      = y .- D * θ
-            w_irls = 1.0 ./ (abs.(r) .+ ε_irls)
-            W_eff  = Diagonal(w .* w_irls)
+            @. w_irls = 1.0 / (abs(r) + ε_irls)
+            W_eff  = Diagonal(w_irls)
             DᵀW_e  = D' * W_eff
             θ_new  = (DᵀW_e * D + Λ) \ (DᵀW_e * y)
-            maximum(abs.(θ_new .- θ)) / (norm(θ) + 1e-10) < 1e-8 && (θ = θ_new; break)
+            _irls_converged(θ_new, θ) && (θ = θ_new; break)
             θ = θ_new
         end
     end
@@ -169,7 +149,7 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
     # ── Extract parameters ────────────────────────────────────────────────────
     μ_fit  = θ[1]
     β_fit  = θ[2]
-    γ_dict = Dict(yr => θ[2 + k] for (k, yr) in enumerate(years))
+    γ_dict = Dict(zip(years, θ[3:2+n_years]))
     A_fit  = θ[2 + n_years + 1]   # sin coefficient
     B_fit  = θ[2 + n_years + 2]   # cos coefficient
 
@@ -186,13 +166,37 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
                + B_fit * cos(2π * t))
               for t in eval_times]
 
-    return (
-        dates        = out_dates,
-        values       = values,
-        mean         = μ_fit,
-        trend        = β_fit,
-        amplitude    = seasonal_amplitude,
-        phase        = seasonal_phase,
-        interannual  = γ_dict,
+    # WLS covariance propagation for uncertainty (L2 system; approximate for L1)
+    L_chol  = cholesky(Symmetric(DᵀD + Λ))
+    V_hat   = L_chol.L \ D'                                          # [n_params × n]
+    df_fit  = sum(abs2, V_hat)
+    rss     = sum(abs2, D * θ .- y)
+    σ̂²     = rss / max(1.0, n - df_fit)
+    D_out   = zeros(length(eval_times), n_params)
+    for (i, t) in enumerate(eval_times)
+        D_out[i, 1] = 1.0
+        D_out[i, 2] = t - t_ref
+        for (k, yr) in enumerate(years)
+            D_out[i, 2 + k] = Float64(floor(Int, t) == yr)
+        end
+        D_out[i, 2 + n_years + 1] = sin(2π * t)
+        D_out[i, 2 + n_years + 2] = cos(2π * t)
+    end
+    V_out   = L_chol.L \ D_out'                                      # [n_params × n_out]
+    std_vec = sqrt(σ̂²) .* sqrt.(dropdims(sum(abs2, V_out, dims=1), dims=1))
+
+    return DimStack(
+        (values = DimArray(values,  Ti(out_dates)),
+         std    = DimArray(std_vec, Ti(out_dates)));
+        metadata = Dict(
+            :method                 => :sinusoid,
+            :smoothness_interannual => smoothness_interannual,
+            :loss_norm              => loss_norm,
+            :mean                   => μ_fit,
+            :trend                  => β_fit,
+            :amplitude              => seasonal_amplitude,
+            :phase                  => seasonal_phase,
+            :interannual            => γ_dict,
+        )
     )
 end

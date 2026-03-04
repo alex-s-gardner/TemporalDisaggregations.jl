@@ -1,5 +1,8 @@
-module TemporalDisaggregation
+module TemporalDisaggregations
 
+using DimensionalData: DimStack, DimArray, Ti
+
+include("utils.jl")
 include("disaggregate_spline.jl")
 include("disaggregate_sinusoid.jl")
 include("disaggregate_gp.jl")

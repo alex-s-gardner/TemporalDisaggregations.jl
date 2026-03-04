@@ -4,73 +4,9 @@ using Statistics
 using LinearAlgebra
 
 """
-    _difference_matrix(m, r)
-
-Return the (m−r) × m matrix that computes r-th order differences of a length-m vector,
-used as the P-spline smoothness penalty `‖Dᵣ a‖²`.  Built by composing the first-difference
-operator r times, so each row contains the binomial coefficients of Δʳ with alternating signs.
-
-| r | Approximates | Effect on fitted curve |
-|---|---|---|
-| 1 | ‖a‖ (constant penalty) | Shrinks toward zero |
-| 2 | ∫ (x′′)² dt  | Penalises curvature |
-| 3 | ∫ (x′′′)² dt | Penalises rate of curvature change |
-| 4 | ∫ (x⁽⁴⁾)² dt | Very smooth; polynomial extrapolation |
-"""
-function _difference_matrix(m::Int, r::Int)
-    r >= 1 || throw(ArgumentError("penalty_order must be ≥ 1"))
-    r <= m - 1 || throw(ArgumentError("penalty_order must be < number of basis functions"))
-    D = Matrix{Float64}(I, m, m)
-    for _ in 1:r
-        n  = size(D, 1) - 1
-        Δ₁ = zeros(n, n + 1)
-        for i in 1:n
-            Δ₁[i, i]     = -1.0
-            Δ₁[i, i + 1] =  1.0
-        end
-        D = Δ₁ * D
-    end
-    return D
-end
-
-"""
-    _monthly_decimal_year_grid(t_min, t_max)
-
-Return `(dates, decimal_years)` for a monthly `Date` grid covering `[t_min, t_max]`,
-where both arguments are decimal years (e.g. `2020.5` = mid-2020).
-"""
-function _monthly_decimal_year_grid(t_min::Real, t_max::Real)
-    y0 = floor(Int, t_min)
-    m0 = clamp(floor(Int, (t_min - y0) * 12) + 1, 1, 12)
-    y1 = floor(Int, t_max)
-    m1 = clamp(floor(Int, (t_max - y1) * 12) + 1, 1, 12)
-    dates = collect(Date(y0, m0, 1):Month(1):Date(y1, m1, 1))
-    times = [year(d) + (month(d) - 1) / 12.0 for d in dates]
-    return dates, times
-end
-
-"""
-    _date_grid(t_min, t_max, step)
-
-Return `(dates, decimal_years)` for a `Date` grid covering `[t_min, t_max]` with the
-given `step` (any `Dates.Period`), where both bounds are decimal years.
-"""
-function _date_grid(t_min::Real, t_max::Real, step::Dates.Period)
-    yr0 = floor(Int, t_min); ndays0 = isleapyear(yr0) ? 366 : 365
-    d_start = Date(yr0, 1, 1) + Day(floor(Int, (t_min - yr0) * ndays0))
-    yr1 = floor(Int, t_max); ndays1 = isleapyear(yr1) ? 366 : 365
-    d_end   = Date(yr1, 1, 1) + Day(floor(Int, (t_max - yr1) * ndays1))
-    dates = collect(d_start:step:d_end)
-    times = Float64[let yr = year(d)
-        yr + (d - Date(yr, 1, 1)).value / (isleapyear(yr) ? 366.0 : 365.0)
-    end for d in dates]
-    return dates, times
-end
-
-"""
     disaggregate_spline(aggregate_values, interval_start, interval_end;
-                   smoothness=1e-3, outlier_rejection=false,
-                   n_knots=nothing, penalty_order=3, tension=0.0, loss_norm=:L2)
+                   smoothness=1e-3, n_knots=nothing, penalty_order=3,
+                   tension=0.0, loss_norm=:L2)
 
 Reconstruct an instantaneous time series from interval-averaged observations.
 
@@ -81,11 +17,10 @@ formulation naturally handles overlapping, gapped, and out-of-order intervals.
 
 # Arguments
 - `aggregate_values`: Vector of n observed averages over each time interval.
-- `interval_start`: Vector of interval start times as decimal years (e.g. `2023.0`).
-- `interval_end`: Vector of interval end times as decimal years.
+- `interval_start`: Vector of interval start times as `Date` or `DateTime` values.
+- `interval_end`: Vector of interval end times as `Date` or `DateTime` values.
 - `smoothness`: Non-negative regularization strength λ. Larger values produce smoother
   output at the cost of fidelity to the observations. Default `1e-3`.
-- `outlier_rejection`: If `true`, intervals with |y − ȳ| > 2.5σ are down-weighted by ×0.1.
 - `n_knots`: Number of knots for the B-spline basis. `nothing` (default) automatically
   uses a **monthly grid** spanning the data domain (12 knots per year), giving a
   well-conditioned overdetermined system and smooth results. Pass an integer to override
@@ -108,15 +43,14 @@ formulation naturally handles overlapping, gapped, and out-of-order intervals.
   (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`.
 
 # Returns
-Named tuple `(dates, values)` where `dates` is a `Vector{Date}` on a grid spanning
-the data domain at `output_step` resolution and `values` is the reconstructed
-instantaneous signal at those dates.
+`DimStack` with layers `values` and `std`, both `DimArray` with a `Ti(dates)` dimension.
+`metadata(result)` returns `Dict(:method => :spline)`.
+Uncertainty is a frequentist P-spline confidence band; approximate for `:L1` loss.
 """
 function disaggregate_spline(aggregate_values::AbstractVector,
-                        interval_start::AbstractVector,
-                        interval_end::AbstractVector;
+                        interval_start::AbstractVector{<:Dates.TimeType},
+                        interval_end::AbstractVector{<:Dates.TimeType};
                         smoothness::Real = 1e-3,
-                        outlier_rejection::Bool = false,
                         n_knots::Union{Int, Nothing} = nothing,
                         penalty_order::Int = 3,
                         tension::Real = 0.0,
@@ -130,6 +64,8 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     any(interval_end .<= interval_start) &&
         throw(ArgumentError(
             "Every interval must satisfy interval_end > interval_start."))
+    smoothness >= 0 ||
+        throw(ArgumentError("smoothness must be ≥ 0."))
     tension >= 0 ||
         throw(ArgumentError("tension must be ≥ 0."))
     loss_norm ∈ (:L1, :L2) ||
@@ -137,20 +73,10 @@ function disaggregate_spline(aggregate_values::AbstractVector,
 
     # Sort intervals chronologically
     order = sortperm(interval_start)
-    t1    = Float64.(interval_start[order])
-    t2    = Float64.(interval_end[order])
+    t1    = _decimal_year.(interval_start[order])
+    t2    = _decimal_year.(interval_end[order])
     y     = Float64.(aggregate_values[order])
     areas = y .* (t2 .- t1)
-
-    # Observation weights (uniform unless outlier rejection is requested)
-    w = ones(n)
-    if outlier_rejection
-        μ, σ = mean(y), std(y)
-        for i in 1:n
-            abs(y[i] - μ) > 2.5σ && (w[i] = 0.1)
-        end
-    end
-    W = Diagonal(w)
 
     # Quartic (p=4) B-spline space for F(t); x(t) = F′(t) is cubic.
     # Knot placement is the primary control over smoothness:
@@ -202,19 +128,20 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     end
 
     # Weighted least-squares with P-spline (+ optional tension) regularisation.
-    # λ scaled by ‖C'WC‖/n so `smoothness` is dimensionless.
+    # λ scaled by ‖C'C‖/n so `smoothness` is dimensionless.
     ε_irls = 1e-6 * (std(areas) + 1e-10)
-    CWC = C' * W * C
+    CWC = C' * C
     λ   = Float64(smoothness) * (norm(CWC) / n + 1e-10)
-    a   = (CWC + λ * P) \ (C' * W * areas)          # L2 init (also final if loss_norm==:L2)
+    a   = (CWC + λ * P) \ (C' * areas)          # L2 init (also final if loss_norm==:L2)
     if loss_norm == :L1
+        w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
-            r      = areas .- C * a
-            w_irls = 1.0 ./ (abs.(r) .+ ε_irls)
-            W_eff  = Diagonal(w .* w_irls)
+            r     = areas .- C * a
+            @. w_irls = 1.0 / (abs(r) + ε_irls)
+            W_eff  = Diagonal(w_irls)
             CWC_e  = C' * W_eff * C
             a_new  = (CWC_e + λ * P) \ (C' * W_eff * areas)
-            maximum(abs.(a_new .- a)) / (norm(a) + 1e-10) < 1e-8 && (a = a_new; break)
+            _irls_converged(a_new, a) && (a = a_new; break)
             a = a_new
         end
     end
@@ -228,5 +155,28 @@ function disaggregate_spline(aggregate_values::AbstractVector,
 
     values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:m) for t in eval_times]
 
-    return (dates = out_dates, values = values)
+    # Frequentist uncertainty via hat-matrix trace (L2 system; approximate for L1)
+    # Small jitter ensures PD when λ is near zero (CWC rank-deficient for m > n)
+    A_unc   = Symmetric(CWC + λ * P)
+    L_chol  = cholesky(A_unc + sqrt(eps()) * norm(A_unc) * I(m))
+    V_hat   = L_chol.L \ C'                                          # [m × n]
+    df_fit  = sum(abs2, V_hat)
+    rss     = sum(abs2, C * a .- areas)
+    σ̂²     = rss / max(1.0, n - df_fit)
+    B_out   = Float64[bsplinebasis(dP_F, j, t) for t in eval_times, j in 1:m]  # [n_out × m]
+    V_out   = L_chol.L \ B_out'                                      # [m × n_out]
+    std_vec = sqrt(σ̂²) .* sqrt.(dropdims(sum(abs2, V_out, dims=1), dims=1))
+
+    return DimStack(
+        (values = DimArray(values,  Ti(out_dates)),
+         std    = DimArray(std_vec, Ti(out_dates)));
+        metadata = Dict(
+            :method        => :spline,
+            :smoothness    => smoothness,
+            :n_knots       => n_knots,
+            :penalty_order => penalty_order,
+            :tension       => tension,
+            :loss_norm     => loss_norm,
+        )
+    )
 end

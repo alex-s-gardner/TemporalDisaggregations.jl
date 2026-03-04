@@ -12,14 +12,14 @@ dispatching to one of three underlying methods controlled by `method`.
 
 # Arguments
 - `aggregate_values`: Vector of n observed averages over each interval.
-- `interval_start`: Interval start times as decimal years (e.g. `2020.0`).
-- `interval_end`: Interval end times as decimal years.
+- `interval_start`: Interval start times as `Date` or `DateTime` values.
+- `interval_end`: Interval end times as `Date` or `DateTime` values.
 - `method`: Reconstruction algorithm (default `:spline`):
   - `:spline`   — Quartic B-spline antiderivative fit (see `disaggregate_spline`).
-    Key kwargs: `smoothness`, `n_knots`, `penalty_order`, `tension`, `outlier_rejection`.
+    Key kwargs: `smoothness`, `n_knots`, `penalty_order`, `tension`.
   - `:sinusoid` — Parametric mean + trend + seasonal + inter-annual model
     (see `disaggregate_sinusoid`).
-    Key kwargs: `smoothness_interannual`, `obs_noise`, `outlier_rejection`.
+    Key kwargs: `smoothness_interannual`.
   - `:gp`       — Sparse inducing-point Gaussian Process (see `disaggregate_gp`).
     Key kwargs: `kernel`, `obs_noise`, `n_quad`.
 - `loss_norm`: Loss function, shared by all methods. `:L2` (default) = weighted
@@ -31,10 +31,14 @@ dispatching to one of three underlying methods controlled by `method`.
   underlying method function. Pass any method-specific kwarg here.
 
 # Returns
-Named tuple with at least `(dates, values)`. Additional fields depend on `method`:
-- `:spline`   → `(dates, values)`
-- `:sinusoid` → `(dates, values, mean, trend, amplitude, phase, interannual)`
-- `:gp`       → `(dates, values, std)`
+`DimStack` with layers `values` and `std` (both `DimArray` with `Ti(dates)` dimension)
+for all methods. Access patterns:
+- `result.values`               — `DimArray` of posterior mean
+- `result.std`                  — `DimArray` of posterior std (≥ 0)
+- `Array(result.values)`        — plain `Vector{Float64}`
+- `collect(dims(result.values, Ti))` — `Vector{Date}` output grid
+- `metadata(result)`            — method-specific `Dict`; sinusoid includes
+  `:mean`, `:trend`, `:amplitude`, `:phase`, `:interannual`
 
 # Examples
 ```julia
@@ -48,8 +52,8 @@ r_robust = disaggregate(y, t1, t2; method = :gp, loss_norm = :L1, obs_noise = 4.
 ```
 """
 function disaggregate(aggregate_values::AbstractVector,
-                        interval_start::AbstractVector,
-                        interval_end::AbstractVector;
+                        interval_start::AbstractVector{<:Dates.TimeType},
+                        interval_end::AbstractVector{<:Dates.TimeType};
                         method::Symbol        = :spline,
                         loss_norm::Symbol     = :L2,
                         output_step::Dates.Period = Month(1),
