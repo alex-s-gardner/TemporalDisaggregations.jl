@@ -37,7 +37,7 @@ using CairoMakie
 lines(result[:signal])   # x-axis = dates, y-axis = signal values
 ```
 
-![Quick-start plot](../images/quickstart_lines_signal.png)
+![Quick-start plot](./assets/quickstart_lines_signal.png)
 
 ## Return Type
 
