@@ -53,8 +53,19 @@ Supports arbitrary `KernelFunctions.jl` kernels (sums, products, periodic, etc.)
 - `obs_noise::Float64 = 1.0`: Observation noise variance σ².
 - `n_quad::Int = 5`: Gauss-Legendre quadrature points per interval.
 """
-@kwdef struct GP <: DisaggregationMethod
-    kernel                           = with_lengthscale(Matern52Kernel(), 1/6)
+@kwdef struct GP{K} <: DisaggregationMethod
+    kernel::K                        = with_lengthscale(Matern52Kernel(), 1/6)
     obs_noise::Float64               = 1.0
     n_quad::Int                      = 5
+end
+
+function Base.show(io::IO, m::GP)
+    print(io, "GP(obs_noise=$(m.obs_noise), n_quad=$(m.n_quad), kernel=…)")
+end
+
+function Base.show(io::IO, ::MIME"text/plain", m::GP)
+    println(io, "GP")
+    println(io, "  kernel:    ", m.kernel)
+    println(io, "  obs_noise: ", m.obs_noise)
+    print(io,   "  n_quad:    ", m.n_quad)
 end
