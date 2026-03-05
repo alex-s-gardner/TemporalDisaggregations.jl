@@ -3,60 +3,13 @@ using Dates
 using Statistics
 using LinearAlgebra
 
-"""
-    disaggregate_spline(aggregate_values, interval_start, interval_end;
-                   smoothness=1e-3, n_knots=nothing, penalty_order=3,
-                   tension=0.0, loss_norm=:L2)
-
-Reconstruct an instantaneous time series from interval-averaged observations.
-
-Models the antiderivative F(t) of the instantaneous signal as a quartic (degree-4) B-spline
-constrained so that F(t2ᵢ) − F(t1ᵢ) equals the observed area (average × duration) for each
-interval. The instantaneous signal is recovered as x(t) = F′(t), which is cubic. This
-formulation naturally handles overlapping, gapped, and out-of-order intervals.
-
-# Arguments
-- `aggregate_values`: Vector of n observed averages over each time interval.
-- `interval_start`: Vector of interval start times as `Date` or `DateTime` values.
-- `interval_end`: Vector of interval end times as `Date` or `DateTime` values.
-- `smoothness`: Non-negative regularization strength λ. Larger values produce smoother
-  output at the cost of fidelity to the observations. Default `1e-3`.
-- `n_knots`: Number of knots for the B-spline basis. `nothing` (default) automatically
-  uses a **monthly grid** spanning the data domain (12 knots per year), giving a
-  well-conditioned overdetermined system and smooth results. Pass an integer to override
-  (e.g. `n_knots = 24` for bi-monthly resolution). Pass `0` to fall back to placing a knot
-  at every unique interval endpoint (dense, high-fidelity but requires a much larger
-  `smoothness` to avoid oscillation, and is slow for large n).
-- `penalty_order`: Order r of the difference penalty ‖Dᵣ a‖². Default `3` (penalises
-  rate of curvature change ≈ x′′′). Higher values give progressively smoother output and
-  more natural boundary behaviour. Use `2` for a less aggressive penalty.
-- `tension`: Non-negative tension strength τ ≥ 0. Adds a scaled first-derivative
-  penalty `τ² · ‖D₂ a‖²` (≈ τ² ∫(x′(t))² dt) alongside the curvature penalty.
-  The penalty is auto-scaled so `tension=1` gives equal weight to both terms.
-  Default `0.0` reproduces the standard P-spline exactly.
-  - `tension ≈ 0.5–1`  — moderate stiffening; suppresses oscillation
-  - `tension ≈ 5–10`   — strong tension; approaches piecewise-linear behaviour
-- `loss_norm`: Loss function for the data-fit term. `:L2` (default) minimises the
-  weighted sum of squared residuals. `:L1` uses Iteratively Reweighted Least Squares
-  (IRLS) to minimise the sum of absolute residuals, which is more robust to outliers.
-- `output_period`: Temporal resolution of the output grid as a `Dates.Period`
-  (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`.
-
-# Returns
-`DimStack` with layers `values` and `std`, both `DimArray` with a `Ti(dates)` dimension.
-`metadata(result)` returns `Dict(:method => :spline)`.
-Uncertainty is a frequentist P-spline confidence band; approximate for `:L1` loss.
-"""
-function disaggregate_spline(aggregate_values::AbstractVector,
-                        interval_start::AbstractVector{<:Dates.TimeType},
-                        interval_end::AbstractVector{<:Dates.TimeType};
-                        smoothness::Real = 1e-3,
-                        n_knots::Union{Int, Nothing} = nothing,
-                        penalty_order::Int = 3,
-                        tension::Real = 0.0,
-                        loss_norm::Symbol = :L2,
-                        output_period::Dates.Period = Month(1),
-                        output_start::Union{Date,Nothing} = nothing)
+function disaggregate(m::Spline,
+                      aggregate_values::AbstractVector,
+                      interval_start::AbstractVector{<:Dates.TimeType},
+                      interval_end::AbstractVector{<:Dates.TimeType};
+                      loss_norm::Symbol = :L2,
+                      output_period::Dates.Period = Month(1),
+                      output_start::Union{Date,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -65,9 +18,9 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     any(interval_end .<= interval_start) &&
         throw(ArgumentError(
             "Every interval must satisfy interval_end > interval_start."))
-    smoothness >= 0 ||
+    m.smoothness >= 0 ||
         throw(ArgumentError("smoothness must be ≥ 0."))
-    tension >= 0 ||
+    m.tension >= 0 ||
         throw(ArgumentError("tension must be ≥ 0."))
     loss_norm ∈ (:L1, :L2) ||
         throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
@@ -84,32 +37,32 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     #   dense grid (n_knots=0) → m ≈ 2n, underdetermined, requires large smoothness.
     p_F        = 4
     t_range_yr = t2[end] - t1[1]
-    t_nodes = if isnothing(n_knots)
+    t_nodes = if isnothing(m.n_knots)
         # Auto monthly: 12 knots per year, minimum p_F+2 to form a valid space
         n_auto = max(p_F + 2, round(Int, 12 * t_range_yr) + 1)
         collect(range(t1[1], t2[end]; length = n_auto))
-    elseif n_knots == 0
+    elseif m.n_knots == 0
         # Dense: one knot per unique interval endpoint (old default; requires large λ)
         sort(unique(vcat(t1, t2)))
     else
-        n_knots >= p_F + 1 ||
+        m.n_knots >= p_F + 1 ||
             throw(ArgumentError("n_knots must be ≥ $(p_F + 1) for degree-$p_F B-splines."))
-        collect(range(t1[1], t2[end]; length = n_knots))
+        collect(range(t1[1], t2[end]; length = m.n_knots))
     end
     k_F     = KnotVector(t_nodes) + p_F * KnotVector([t_nodes[1], t_nodes[end]])
     P_F     = BSplineSpace{p_F}(k_F)
-    m       = dim(P_F)
-    if tension > 0.0
-        m >= 3 ||
+    n_basis  = dim(P_F)
+    if m.tension > 0.0
+        n_basis >= 3 ||
             throw(ArgumentError(
-                "tension > 0 requires at least 3 basis functions (m=$m); " *
+                "tension > 0 requires at least 3 basis functions (n_basis=$n_basis); " *
                 "increase n_knots or the time span."))
     end
 
     # Observation matrix C: C[i,j] = B_j(t2[i]) − B_j(t1[i])
     # By the fundamental theorem of calculus, C * a = areas  ⟺  F(t2ᵢ)−F(t1ᵢ) = areaᵢ
     C = [bsplinebasis(P_F, j, t2[i]) - bsplinebasis(P_F, j, t1[i])
-         for i in 1:n, j in 1:m]
+         for i in 1:n, j in 1:n_basis]
     # Normalise each row by the interval length so we fit interval averages (y)
     # rather than interval totals (areas).  This gives equal weight to every
     # observation regardless of length and keeps RSS in signal² units.
@@ -117,17 +70,17 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     C_norm = C ./ Δt
 
     # P-spline penalty of order `penalty_order`: ‖Dᵣ a‖²
-    Dr   = _difference_matrix(m, penalty_order)
+    Dr   = _difference_matrix(n_basis, m.penalty_order)
     DrDr = Dr' * Dr
 
     # Tension penalty: augments the P-spline with ‖D₂ a‖² ≈ ∫(x′(t))² dt,
     # scaled so tension=1 equates the two penalty magnitudes.
     # tension=0.0 → identical to existing P-spline (exact backward compatibility).
-    if tension > 0.0
-        D2   = _difference_matrix(m, 2)
+    if m.tension > 0.0
+        D2   = _difference_matrix(n_basis, 2)
         D2D2 = D2' * D2
         scale = norm(DrDr) / (norm(D2D2) + 1e-10)
-        P = DrDr + Float64(tension)^2 * scale * D2D2
+        P = DrDr + m.tension^2 * scale * D2D2
     else
         P = DrDr
     end
@@ -136,7 +89,7 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     # λ scaled by ‖C'C‖/n so `smoothness` is dimensionless.
     ε_irls = 1e-6 * (std(y) + 1e-10)
     CWC = C_norm' * C_norm
-    λ   = Float64(smoothness) * (norm(CWC) / n + 1e-10)
+    λ   = m.smoothness * (norm(CWC) / n + 1e-10)
     a   = (CWC + λ * P) \ (C_norm' * y)          # L2 init (also final if loss_norm==:L2)
     if loss_norm == :L1
         w_irls = Vector{Float64}(undef, n)
@@ -158,7 +111,7 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     out_dates, eval_times = _date_grid(t_nodes[1], t_nodes[end], output_period; output_start)
     eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
 
-    values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:m) for t in eval_times]
+    values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:n_basis) for t in eval_times]
 
     # Type-II MLE (empirical Bayes) for σ²:
     #   σ̂² = (‖y − C_norm â‖² + λ â′Pâ) / n
@@ -168,11 +121,11 @@ function disaggregate_spline(aggregate_values::AbstractVector,
     # the spline can interpolate the data exactly.
     rss     = sum(abs2, C_norm * a .- y)                             # residuals in signal units
     σ̂²     = (rss + λ * dot(a, P * a)) / n
-    # Small jitter ensures PD when λ is near zero (CWC rank-deficient for m > n)
+    # Small jitter ensures PD when λ is near zero (CWC rank-deficient for n_basis > n)
     A_unc   = Symmetric(CWC + λ * P)
-    L_chol  = cholesky(A_unc + sqrt(eps()) * norm(A_unc) * I(m))
-    B_out   = Float64[bsplinebasis(dP_F, j, t) for t in eval_times, j in 1:m]  # [n_out × m]
-    V_out   = L_chol.L \ B_out'                                      # [m × n_out]
+    L_chol  = cholesky(A_unc + sqrt(eps()) * norm(A_unc) * I(n_basis))
+    B_out   = Float64[bsplinebasis(dP_F, j, t) for t in eval_times, j in 1:n_basis]  # [n_out × n_basis]
+    V_out   = L_chol.L \ B_out'                                      # [n_basis × n_out]
     std_vec = sqrt(σ̂²) .* sqrt.(dropdims(sum(abs2, V_out, dims=1), dims=1))
 
     return DimStack(
@@ -180,12 +133,12 @@ function disaggregate_spline(aggregate_values::AbstractVector,
          std    = DimArray(std_vec, Ti(out_dates)));
         metadata = Dict(
             :method        => :spline,
-            :smoothness    => smoothness,
-            :n_knots       => n_knots,
-            :penalty_order => penalty_order,
-            :tension       => tension,
+            :smoothness    => m.smoothness,
+            :n_knots       => m.n_knots,
+            :penalty_order => m.penalty_order,
+            :tension       => m.tension,
             :loss_norm     => loss_norm,
-            :output_period   => output_period,
+            :output_period => output_period,
         )
     )
 end
