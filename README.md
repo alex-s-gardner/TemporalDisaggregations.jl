@@ -1,5 +1,7 @@
 # TemporalDisaggregations.jl
 
+[![docs-dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://alex-s-gardner.github.io/TemporalDisaggregations.jl/dev/)
+
 Reconstruct instantaneous time series from **interval-averaged observations** — measurements that represent the average of a signal over a time window rather than a point-in-time snapshot.
 
 ![Overview of all three methods](docs/images/overview.png)
