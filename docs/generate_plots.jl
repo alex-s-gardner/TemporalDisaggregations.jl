@@ -93,7 +93,7 @@ save("docs/images/gp_detail.png", fig2, px_per_unit = 2)
 println("Saved gp_detail.png")
 
 # ── Also need tension-spline and sinusoid std ──────────────────────────────────
-r_tension = disaggregate(Spline(smoothness = 1e-3, tension = 10.0), y, t1, t2)
+r_tension = disaggregate(Spline(smoothness = 1e-3, tension = 25.0), y, t1, t2)
 
 sp_σ      = r_spline.signal.data  
 sp_std    = r_spline.std.data
@@ -134,7 +134,7 @@ lines!(ax4a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax4a; position = :lt, framevisible = true, labelsize = 11)
 
 ax4b = Axis(fig4[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: tension-spline mean ± 2σ  (tension = 10)")
+    title = "Output: tension-spline mean ± 2σ  (tension = 25)")
 band!(ax4b, t_output, ten_μ .- 2 .* ten_std, ten_μ .+ 2 .* ten_std;
     color = (:purple, 0.2), label = "± 2σ")
 lines!(ax4b, t_output, ten_μ; color = :purple, linewidth = 2.5, label = "Tension-spline mean")
