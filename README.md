@@ -232,6 +232,8 @@ using CairoMakie
 lines(result[:signal])   # x-axis = dates, y-axis = signal values
 ```
 
+![Quick-start: lines(result[:signal])](docs/images/quickstart_lines_signal.png)
+
 ## Dependencies
 
 - [BasicBSpline.jl](https://github.com/hyrodium/BasicBSpline.jl) — B-spline basis evaluation (spline method)

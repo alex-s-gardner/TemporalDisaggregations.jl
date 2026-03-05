@@ -164,3 +164,21 @@ axislegend(ax5b; position = :lt, framevisible = true, labelsize = 11)
 
 save("docs/images/sinusoid_detail.png", fig5, px_per_unit = 2)
 println("Saved sinusoid_detail.png")
+
+# ── Figure 6: lines(result[:signal]) quick-start demo ────────────────────────
+# Mirrors the one-liner shown in the README Quick Start section.
+# Uses decimal-year x-axis since DimensionalData's Ti dimension plots that way.
+fig6 = Figure(size = (700, 300), fontsize = 13);
+ax6 = Axis(fig6[1, 1]; xlabel = "Year", ylabel = "Signal")
+lines!(ax6, t_output, gp_μ; color = :steelblue, linewidth = 2)
+save("docs/images/lines_signal.png", fig6, px_per_unit = 2)
+println("Saved lines_signal.png")
+
+# ── Figure 7: lines(result[:signal]) README quick-start demo ─────────────────
+# Reproduces what `lines(result[:signal])` produces: Date x-axis, signal y-axis.
+t_dates = dims(r_gp, :Ti).val
+fig7 = Figure(size = (700, 300), fontsize = 13);
+ax7 = Axis(fig7[1, 1]; xlabel = "Date", ylabel = "Signal")
+lines!(ax7, t_dates, gp_μ; color = :steelblue, linewidth = 2)
+save("docs/images/quickstart_lines_signal.png", fig7, px_per_unit = 2)
+println("Saved quickstart_lines_signal.png")
