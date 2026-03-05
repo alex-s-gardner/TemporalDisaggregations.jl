@@ -41,9 +41,8 @@ t2 = [Date(2020,1,28), Date(2020,3,10), ...]  # interval end dates
 result = disaggregate(Spline(), y, t1, t2)
 
 # Access results
-dates  = collect(dims(result.signal, Ti))   # Vector{Date}
-values = Array(result.signal)               # Vector{Float64} — posterior mean
-stds   = Array(result.std)                  # Vector{Float64} — posterior std
+values = result[:signal]    # DimArray — instantaneous signal at each output time
+stds   = result[:std]       # DimArray — method-dependent standard deviation
 
 # Plot (requires CairoMakie)
 using CairoMakie

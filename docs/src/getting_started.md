@@ -19,13 +19,13 @@ y  = [2.3, 1.8, 3.1, 2.7, ...]              # observed averages
 t1 = [Date(2020,1,5), Date(2020,2,3), ...]   # interval start dates
 t2 = [Date(2020,1,28), Date(2020,3,10), ...]  # interval end dates
 
-# Reconstruct on a monthly grid (default)
-result = disaggregate(y, t1, t2)
+# Reconstruct on a monthly grid (Spline method by default)
+result = disaggregate(Spline(), y, t1, t2)
 
 # Access results
 dates  = collect(dims(result.signal, Ti))   # Vector{Date}
-values = Array(result.signal)               # Vector{Float64} — posterior mean
-stds   = Array(result.std)                  # Vector{Float64} — posterior std
+values = result[:signal].data   # Vector{Float64} — posterior mean
+stds   = result[:std].data      # Vector{Float64} — posterior std
 ```
 
 ## Plotting
@@ -68,13 +68,13 @@ julia> result
 
 ```julia
 # Daily output
-result = disaggregate(y, t1, t2; output_period = Day(1))
+result = disaggregate(Spline(), y, t1, t2; output_period = Day(1))
 
 # Weekly output
-result = disaggregate(y, t1, t2; output_period = Week(1))
+result = disaggregate(Spline(), y, t1, t2; output_period = Week(1))
 
 # Monthly output on the 15th of each month (instead of the 1st)
-result = disaggregate(y, t1, t2; output_start = Date(2020, 1, 15))
+result = disaggregate(Spline(), y, t1, t2; output_start = Date(2020, 1, 15))
 ```
 
 ## Robust L1 Loss
@@ -82,7 +82,7 @@ result = disaggregate(y, t1, t2; output_start = Date(2020, 1, 15))
 All methods support `loss_norm = :L1` for robustness to outliers:
 
 ```julia
-result = disaggregate(y, t1, t2; method = :gp, loss_norm = :L1, obs_noise = 4.0)
+result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = :L1)
 ```
 
 L1 loss automatically down-weights suspicious observations via IRLS.

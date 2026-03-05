@@ -5,4 +5,8 @@
 ```@docs
 disaggregate
 decimal_year
+DisaggregationMethod
+Spline
+Sinusoid
+GP
 ```

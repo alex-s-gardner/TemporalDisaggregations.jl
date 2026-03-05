@@ -188,7 +188,7 @@ end
             # Mean of recovered signal should be close to 5.0
             @test mean(result.signal) ≈ 5.0 atol=0.1
             # std should be non-negative
-            @test all(Array(result.std) .>= 0)
+            @test all(result.std.data .>= 0)
         end
 
         @testset "L1 vs L2 agree on clean data" begin
@@ -196,7 +196,7 @@ end
             y = [3.0 + sin(2π * (i / 12.0)) for i in 1:24]
             r_l2 = disaggregate(Spline(), y, t1, t2; loss_norm = :L2)
             r_l1 = disaggregate(Spline(), y, t1, t2; loss_norm = :L1)
-            @test cor(Array(r_l2.signal), Array(r_l1.signal)) > 0.99
+            @test cor(r_l2.signal.data, r_l1.signal.data) > 0.99
         end
 
         @testset "output_period = Day(1) produces finer grid" begin
@@ -263,7 +263,7 @@ end
             y = [2.0 + sin(2π * i / 12) for i in 1:24]
             r_l2 = disaggregate(Sinusoid(), y, t1, t2; loss_norm = :L2)
             r_l1 = disaggregate(Sinusoid(), y, t1, t2; loss_norm = :L1)
-            @test cor(Array(r_l2.signal), Array(r_l1.signal)) > 0.99
+            @test cor(r_l2.signal.data, r_l1.signal.data) > 0.99
         end
 
         @testset "output_period = Day(1)" begin
@@ -289,7 +289,7 @@ end
             @test haskey(metadata(result), :interannual)
             @test metadata(result)[:amplitude] >= 0.0
             @test 0.0 <= metadata(result)[:phase] <= 1.0
-            @test all(Array(result.std) .>= 0)
+            @test all(result.std.data .>= 0)
         end
     end
 
@@ -305,7 +305,7 @@ end
             @test result.std    isa DimArray
             @test hasdim(result.signal, Ti)
             @test length(result.signal) == length(result.std)
-            @test all(Array(result.std) .>= 0.0)
+            @test all(result.std.data .>= 0.0)
             @test all(isfinite, result.signal)
             @test all(isfinite, result.std)
         end
@@ -317,7 +317,7 @@ end
             r_daily   = disaggregate(GP(obs_noise=0.1), y, t1, t2;
                                      output_period = Day(1))
             @test length(r_daily.signal) > length(r_monthly.signal)
-            @test all(Array(r_daily.std) .>= 0.0)
+            @test all(r_daily.std.data .>= 0.0)
             @test all(isfinite, r_daily.signal)
         end
 
@@ -335,7 +335,7 @@ end
             y = [sin(2π * i / 12) for i in 1:24]
             result = disaggregate(GP(obs_noise=0.1), y, t1, t2;
                                   loss_norm = :L1)
-            @test all(Array(result.std) .>= 0.0)
+            @test all(result.std.data .>= 0.0)
             @test all(isfinite, result.signal)
         end
     end

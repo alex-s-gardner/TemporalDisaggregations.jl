@@ -16,7 +16,7 @@ hero:
 
 features:
   - title: Three Methods
-    details: B-spline, sinusoid, and Gaussian Process — all sharing the same interface. Switch with a single keyword argument.
+    details: B-spline, sinusoid, and Gaussian Process — all sharing the same interface. Switch by passing a different algorithm struct.
   - title: Uncertainty Estimates
     details: Every method returns posterior standard deviations alongside the reconstructed signal.
   - title: Robust to Outliers
