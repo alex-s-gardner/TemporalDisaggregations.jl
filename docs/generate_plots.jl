@@ -176,9 +176,8 @@ println("Saved lines_signal.png")
 
 # ── Figure 7: lines(result[:signal]) README quick-start demo ─────────────────
 # Reproduces what `lines(result[:signal])` produces: Date x-axis, signal y-axis.
-t_dates = dims(r_gp, :Ti).val
 fig7 = Figure(size = (700, 300), fontsize = 13);
 ax7 = Axis(fig7[1, 1]; xlabel = "Date", ylabel = "Signal")
-lines!(ax7, t_dates, gp_μ; color = :steelblue, linewidth = 2)
+lines!(ax7, r_spline.signal)
 save("docs/images/quickstart_lines_signal.png", fig7, px_per_unit = 2)
 println("Saved quickstart_lines_signal.png")
