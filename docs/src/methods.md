@@ -25,7 +25,7 @@ Adding tension stiffens the curve in data-sparse regions — think of pulling th
 ```julia
 result = disaggregate(Spline(
     smoothness = 1e-3,
-    tension    = 10.0,    # 0.5–1 moderate; 5–10 near piecewise-linear
+    tension    = 25.0,    # 0.5–1 moderate; 5–10 near piecewise-linear; >20 strongly stiffened
 ), y, t1, t2)
 ```
 

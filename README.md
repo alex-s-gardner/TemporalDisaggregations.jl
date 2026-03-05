@@ -2,7 +2,7 @@
 
 [![docs-dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://alex-s-gardner.github.io/TemporalDisaggregations.jl/dev/)
 
-Reconstruct instantaneous time series from **interval-averaged observations** — measurements that represent the average of a signal over a time window rather than a point-in-time snapshot.
+Reconstruct **instantaneous** time series from **interval-averaged** observations — measurements that represent the average of a signal over a time window rather than a point-in-time snapshot.
 
 ![Overview of all three methods](docs/images/overview.png)
 
@@ -10,7 +10,7 @@ Reconstruct instantaneous time series from **interval-averaged observations** �
 
 ```julia
 using Pkg
-Pkg.add("TemporalDisaggregations")
+Pkg.add("https://github.com/alex-s-gardner/TemporalDisaggregations.jl")
 ```
 
 ## The Problem
@@ -35,8 +35,8 @@ using Dates
 using DimensionalData: dims, Ti
 
 # Your data: interval-averaged observations
-y  = [2.3, 1.8, 3.1, 2.7, ...]          # observed averages
-t1 = [Date(2020,1,5), Date(2020,2,3), ...]  # interval start dates
+y  = [2.3, 1.8, 3.1, 2.7, ...]                # observed averages
+t1 = [Date(2020,1,5), Date(2020,2,3), ...]    # interval start dates
 t2 = [Date(2020,1,28), Date(2020,3,10), ...]  # interval end dates
 
 # Reconstruct on a monthly grid (default: Spline method)
@@ -53,7 +53,7 @@ lines(result[:signal])
 
 ## Methods
 
-All three methods share the same interface and return type. Switch methods by passing a different algorithm struct as the first argument.
+All three methods share the same interface and return type. Switch methods by passing a different algorithm struct [`Spline()`, `Sinusoid()`, `GP()`] as the first argument.
 
 ### B-spline (`Spline`)
 
@@ -78,7 +78,7 @@ Adding tension stiffens the curve in data-sparse regions — think of pulling th
 ```julia
 result = disaggregate(Spline(
     smoothness = 1e-3,
-    tension    = 10.0,    # 0.5–1 moderate; 5–10 near piecewise-linear
+    tension    = 25.0,    # 0.5–1 moderate; 5–10 near piecewise-linear; >20 strongly stiffened
 ), y, t1, t2)
 ```
 
@@ -161,17 +161,6 @@ All methods support `loss_norm = :L1` for robustness to blunders (outliers). L1 
 result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = :L1)
 ```
 
-## Return Type
-
-All methods return a `DimStack` (from [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl)) with two layers:
-
-```julia
-result[:signal]    # DimArray — instantaneous signal value at a point in time (Ti)
-result[:std]       # DimArray — method dependent standard deviation at a point in time (Ti)
-```
-
-
-> **Note: `std` values are not directly comparable across methods.**
 > Each method derives uncertainty differently, so the magnitude and shape of `std` reflects the method's statistical framework rather than a universal measure of confidence:
 >
 > | Method | What `std` measures | Key caveat |
@@ -181,6 +170,15 @@ result[:std]       # DimArray — method dependent standard deviation at a point
 > | **Sinusoid** | Uncertainty in the fitted seasonal parameters | Only valid if the true signal is well-described by mean + trend + sinusoid |
 >
 > When using `loss_norm = :L1`, `std` is approximate — it is computed from the final reweighted system, not from L1 theory.
+
+## Return Type
+
+All methods return a `DimStack` (from [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl)) with two layers:
+
+```julia
+result[:signal]    # DimArray — instantaneous signal value at a point in time (Ti)
+result[:std]       # DimArray — method dependent standard deviation at a point in time (Ti)
+```
 
 DimStacks provide an intuitive summary when displayed in the REPL:
 
@@ -230,7 +228,6 @@ lines(result[:signal])   # x-axis = dates, y-axis = signal values
 ![Quick-start: lines(result[:signal])](docs/images/quickstart_lines_signal.png)
 
 ## Dependencies
-
 - [BasicBSpline.jl](https://github.com/hyrodium/BasicBSpline.jl) — B-spline basis evaluation (spline method)
 - [AbstractGPs.jl](https://github.com/JuliaGaussianProcesses/AbstractGPs.jl) + [KernelFunctions.jl](https://github.com/JuliaGaussianProcesses/KernelFunctions.jl) — GP prior and kernel definitions (GP method)
 - [FastGaussQuadrature.jl](https://github.com/JuliaApproximation/FastGaussQuadrature.jl) — Gauss-Legendre quadrature (GP method)
