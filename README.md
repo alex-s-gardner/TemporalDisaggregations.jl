@@ -227,7 +227,7 @@ DimensionalData arrays work directly with Makie.jl for plotting:
 
 ```julia
 # Install CairoMakie if you don't have it:
-# using Pkg; Pkg.add("CairoMakie")
+using Pkg; Pkg.add("CairoMakie")
 using CairoMakie
 lines(result[:signal])   # x-axis = dates, y-axis = signal values
 ```
