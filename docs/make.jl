@@ -20,7 +20,7 @@ makedocs(;
     warnonly = true,
 )
 
-deploydocs(;
+DocumenterVitepress.deploydocs(;
     repo = "github.com/alex-s-gardner/TemporalDisaggregations.jl",
     push_preview = true,
 )
