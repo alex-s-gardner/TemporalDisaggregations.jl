@@ -23,7 +23,9 @@ Many real-world measurements are temporal averages rather than point observation
 
 When intervals are irregular, overlapping, or sparse, standard interpolation fails. `TemporalDisaggregations.jl` solves this inverse problem: given a set of interval averages — each one the mean of an unknown signal over a time window — it recovers the underlying instantaneous signal on a regular output grid, along with uncertainty estimates.
 
-In math: `yᵢ ≈ (1/Δtᵢ) ∫_{t1ᵢ}^{t2ᵢ} x(t) dt`
+```math
+y_i \approx \frac{1}{\Delta t_i} \int_{t_{1,i}}^{t_{2,i}} x(t) \, dt
+```
 
 ## Quick Start
 
@@ -86,8 +88,8 @@ result = disaggregate(Spline(
 
 Fits the parametric model
 
-```
-x(t) = μ + β·(t − t̄) + γ(year) + A·sin(2πt) + B·cos(2πt)
+```math
+x(t) = \mu + \beta(t - \bar{t}) + \gamma(\text{year}) + A\sin(2\pi t) + B\cos(2\pi t)
 ```
 
 where `μ` is the mean, `β` is a linear trend, `γ(year)` is a per-year anomaly, and `A`, `B` are annual seasonal amplitudes. All integrals are solved analytically, making this the fastest of the three methods. Fitted parameters are accessible in the result metadata.
