@@ -37,8 +37,8 @@ y  = [2.3, 1.8, 3.1, 2.7, ...]          # observed averages
 t1 = [Date(2020,1,5), Date(2020,2,3), ...]  # interval start dates
 t2 = [Date(2020,1,28), Date(2020,3,10), ...]  # interval end dates
 
-# Reconstruct on a monthly grid (default)
-result = disaggregate(y, t1, t2)
+# Reconstruct on a monthly grid (default: Spline method)
+result = disaggregate(Spline(), y, t1, t2)
 
 # Access results
 dates  = collect(dims(result.signal, Ti))   # Vector{Date}
@@ -52,42 +52,38 @@ lines(result[:signal])
 
 ## Methods
 
-All three methods share the same interface and return type. Switch methods with a single keyword argument.
+All three methods share the same interface and return type. Switch methods by passing a different algorithm struct as the first argument.
 
-### B-spline (`method = :spline`)
+### B-spline (`Spline`)
 
 Fits a smooth curve whose running averages match the observations. A regularisation parameter controls how smooth the result is; an optional tension penalty suppresses oscillation near sparse regions.
 
 ```julia
-result = disaggregate(y, t1, t2;
-    method        = :spline,
+result = disaggregate(Spline(
     smoothness    = 1e-3,       # larger = smoother
     tension       = 0.0,        # > 0 suppresses oscillation
     penalty_order = 3,          # order of difference penalty
-    loss_norm     = :L2,        # or :L1 for robustness to blunders
-)
+), y, t1, t2; loss_norm = :L2)
 ```
 
 **Uncertainty:** Confidence band derived from how strongly the regularisation constrains the fit.
 
 ![B-spline reconstruction](docs/images/spline_detail.png)
 
-### Tension-spline (`method = :spline`, `tension > 0`)
+### Tension-spline (`Spline` with `tension > 0`)
 
 Adding tension stiffens the curve in data-sparse regions — think of pulling the spline taut like a guitar string. It suppresses oscillation while preserving fidelity where observations are dense.
 
 ```julia
-result = disaggregate(y, t1, t2;
-    method     = :spline,
+result = disaggregate(Spline(
     smoothness = 1e-3,
     tension    = 10.0,    # 0.5–1 moderate; 5–10 near piecewise-linear
-    loss_norm  = :L2,
-)
+), y, t1, t2)
 ```
 
 ![Tension-spline reconstruction](docs/images/tension_spline_detail.png)
 
-### Sinusoid (`method = :sinusoid`)
+### Sinusoid (`Sinusoid`)
 
 Fits the parametric model
 
@@ -98,11 +94,9 @@ x(t) = μ + β·(t − t̄) + γ(year) + A·sin(2πt) + B·cos(2πt)
 where `μ` is the mean, `β` is a linear trend, `γ(year)` is a per-year anomaly, and `A`, `B` are annual seasonal amplitudes. All integrals are solved analytically, making this the fastest of the three methods. Fitted parameters are accessible in the result metadata.
 
 ```julia
-result = disaggregate(y, t1, t2;
-    method                 = :sinusoid,
+result = disaggregate(Sinusoid(
     smoothness_interannual = 1e-2,   # ridge penalty on year-to-year anomalies
-    loss_norm              = :L2,
-)
+), y, t1, t2)
 
 # Fitted parameters
 using DimensionalData: metadata
@@ -117,7 +111,7 @@ md[:interannual]  # Dict{Int,Float64} of per-year anomalies
 
 ![Sinusoid reconstruction](docs/images/sinusoid_detail.png)
 
-### Gaussian Process (`method = :gp`)
+### Gaussian Process (`GP`)
 
 Models the signal as a Gaussian Process — a flexible probabilistic model encoding correlations through time. A sparse approximation keeps computation fast even for long records. Specify the correlation structure via a `KernelFunctions.jl` kernel.
 
@@ -127,13 +121,11 @@ using KernelFunctions
 k = 15.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
      5.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
 
-result = disaggregate(y, t1, t2;
-    method    = :gp,
+result = disaggregate(GP(
     kernel    = k,
     obs_noise = 4.0,    # observation noise variance σ²
     n_quad    = 5,      # numerical integration points per interval (5 is usually enough)
-    loss_norm = :L2,
-)
+), y, t1, t2)
 ```
 
 **Uncertainty:** Full GP posterior standard deviation — a true probabilistic credible interval given the chosen kernel.
@@ -146,16 +138,16 @@ result = disaggregate(y, t1, t2;
 
 ```julia
 # Daily output
-result = disaggregate(y, t1, t2; output_period = Day(1))
+result = disaggregate(Spline(), y, t1, t2; output_period = Day(1))
 
 # Weekly output
-result = disaggregate(y, t1, t2; output_period = Week(1))
+result = disaggregate(Spline(), y, t1, t2; output_period = Week(1))
 
 # Monthly output on the 15th of each month (instead of the 1st)
-result = disaggregate(y, t1, t2; output_start = Date(2020, 1, 15))
+result = disaggregate(Spline(), y, t1, t2; output_start = Date(2020, 1, 15))
 
 # Weekly output starting from a specific date
-result = disaggregate(y, t1, t2; output_period = Week(1), output_start = Date(2020, 1, 8))
+result = disaggregate(Spline(), y, t1, t2; output_period = Week(1), output_start = Date(2020, 1, 8))
 ```
 
 The `output_start` kwarg anchors the output grid. For `Month` steps, only the day-of-month matters — the grid automatically starts from the correct month for your data. For other step sizes, `output_start` is used as the literal first grid point.
@@ -165,7 +157,7 @@ The `output_start` kwarg anchors the output grid. For `Month` steps, only the da
 All methods support `loss_norm = :L1` for robustness to blunders (outliers). L1 loss down-weights suspicious observations automatically, without needing to identify them manually:
 
 ```julia
-result = disaggregate(y, t1, t2; method = :gp, loss_norm = :L1, obs_noise = 4.0)
+result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = :L1)
 ```
 
 ## Return Type

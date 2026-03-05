@@ -30,13 +30,13 @@ t2 = min.(t_daily[end], t_center .+ Dates.Day.(round.(Int, rand(n) .* interval_l
 y        = [mean(signal[(t1[i] .<= t_daily) .& (t_daily .<= t2[i])]) for i in 1:n]
 
 # ── Disaggregate ──────────────────────────────────────────────────────────────
-r_spline = disaggregate(y, t1, t2; method = :spline,   smoothness = 1e-3)
-r_sin    = disaggregate(y, t1, t2; method = :sinusoid, smoothness_interannual = 1e-2)
+r_spline = disaggregate(Spline(smoothness = 1e-3), y, t1, t2)
+r_sin    = disaggregate(Sinusoid(smoothness_interannual = 1e-2), y, t1, t2)
 
 k = 15.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
      5.0^2 * with_lengthscale(Matern52Kernel(), 2.0) +
      3.0^2 * with_lengthscale(Matern32Kernel(), 1/12)
-r_gp = disaggregate(y, t1, t2; method = :gp, kernel = k, obs_noise = noise_std^2, n_quad = 5)
+r_gp = disaggregate(GP(kernel = k, obs_noise = noise_std^2, n_quad = 5), y, t1, t2)
 
 # Extract plain Float64 vectors (avoids Makie/DimensionalData extension conflicts)
 # Scalar indexing on a DimArray always returns a plain scalar.
@@ -93,7 +93,7 @@ save("docs/images/gp_detail.png", fig2, px_per_unit = 2)
 println("Saved gp_detail.png")
 
 # ── Also need tension-spline and sinusoid std ──────────────────────────────────
-r_tension = disaggregate(y, t1, t2; method = :spline, smoothness = 1e-3, tension = 10.0)
+r_tension = disaggregate(Spline(smoothness = 1e-3, tension = 10.0), y, t1, t2)
 
 sp_σ      = r_spline.signal.data  
 sp_std    = r_spline.std.data

@@ -124,33 +124,52 @@ end
     end
 
     # ─────────────────────────────────────────────────────────────────────────
-    @testset "Input validation (all methods)" begin
+    @testset "Struct construction and defaults" begin
+        s = Spline()
+        @test s.smoothness == 1e-3
+        @test s.n_knots === nothing
+        @test s.penalty_order == 3
+        @test s.tension == 0.0
+
+        sin_m = Sinusoid()
+        @test sin_m.smoothness_interannual == 1e-2
+
+        gp_m = GP()
+        @test gp_m.obs_noise == 1.0
+        @test gp_m.n_quad == 5
+
+        # Type hierarchy
+        @test Spline() isa DisaggregationMethod
+        @test Sinusoid() isa DisaggregationMethod
+        @test GP() isa DisaggregationMethod
+
+        # Wrong kwargs caught at struct construction
+        @test_throws MethodError Spline(obs_noise=1.0)
+        @test_throws MethodError GP(smoothness=1e-3)
+    end
+
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "Input validation" begin
         t1 = [Date(2020, 1, 1), Date(2020, 2, 1)]
         t2 = [Date(2020, 2, 1), Date(2020, 3, 1)]
         y  = [1.0, 2.0]
 
         # Length mismatch
-        @test_throws DimensionMismatch disaggregate([1.0], t1, t2)
-        @test_throws DimensionMismatch disaggregate(y, [Date(2020,1,1)], t2)
-        @test_throws DimensionMismatch disaggregate(y, t1, [Date(2020,2,1)])
+        @test_throws DimensionMismatch disaggregate(Spline(), [1.0], t1, t2)
+        @test_throws DimensionMismatch disaggregate(Spline(), y, [Date(2020,1,1)], t2)
+        @test_throws DimensionMismatch disaggregate(Spline(), y, t1, [Date(2020,2,1)])
 
         # interval_end ≤ interval_start
         t2_bad = [Date(2020, 1, 1), Date(2020, 3, 1)]  # first end == start
-        @test_throws ArgumentError disaggregate(y, t1, t2_bad)
+        @test_throws ArgumentError disaggregate(Spline(), y, t1, t2_bad)
         t2_rev = [Date(2019, 12, 1), Date(2020, 3, 1)]  # first end < start
-        @test_throws ArgumentError disaggregate(y, t1, t2_rev)
-
-        # Invalid method
-        @test_throws ArgumentError disaggregate(y, t1, t2; method = :invalid)
-
-        # Invalid loss_norm (at top-level dispatcher)
-        @test_throws ArgumentError disaggregate(y, t1, t2; loss_norm = :L3)
+        @test_throws ArgumentError disaggregate(Spline(), y, t1, t2_rev)
 
         # Spline-specific: smoothness < 0
-        @test_throws ArgumentError disaggregate(y, t1, t2; method = :spline, smoothness = -1.0)
+        @test_throws ArgumentError disaggregate(Spline(smoothness=-1.0), y, t1, t2)
 
         # GP-specific: obs_noise < 0
-        @test_throws ArgumentError disaggregate(y, t1, t2; method = :gp, obs_noise = -1.0)
+        @test_throws ArgumentError disaggregate(GP(obs_noise=-1.0), y, t1, t2)
     end
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -160,7 +179,7 @@ end
             # 24 non-overlapping monthly intervals, constant value = 5.0
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = fill(5.0, 24)
-            result = disaggregate(y, t1, t2; method = :spline, smoothness = 1e-8)
+            result = disaggregate(Spline(smoothness=1e-8), y, t1, t2)
             @test result isa DimStack
             @test result.signal isa DimArray
             @test result.std    isa DimArray
@@ -175,16 +194,16 @@ end
         @testset "L1 vs L2 agree on clean data" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [3.0 + sin(2π * (i / 12.0)) for i in 1:24]
-            r_l2 = disaggregate(y, t1, t2; method = :spline, loss_norm = :L2)
-            r_l1 = disaggregate(y, t1, t2; method = :spline, loss_norm = :L1)
+            r_l2 = disaggregate(Spline(), y, t1, t2; loss_norm = :L2)
+            r_l1 = disaggregate(Spline(), y, t1, t2; loss_norm = :L1)
             @test cor(Array(r_l2.signal), Array(r_l1.signal)) > 0.99
         end
 
-        @testset "output_step = Day(1) produces finer grid" begin
+        @testset "output_period = Day(1) produces finer grid" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             y = ones(12)
-            r_monthly = disaggregate(y, t1, t2; method = :spline)
-            r_daily   = disaggregate(y, t1, t2; method = :spline, output_step = Day(1))
+            r_monthly = disaggregate(Spline(), y, t1, t2)
+            r_daily   = disaggregate(Spline(), y, t1, t2; output_period = Day(1))
             @test length(r_daily.signal) > length(r_monthly.signal)
             @test collect(dims(r_daily.signal, Ti))[1] isa Date
         end
@@ -192,8 +211,8 @@ end
         @testset "tension > 0 returns valid result" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [sin(2π * i / 12) for i in 1:24]
-            r_notension = disaggregate(y, t1, t2; method = :spline, tension = 0.0)
-            r_tension   = disaggregate(y, t1, t2; method = :spline, tension = 5.0)
+            r_notension = disaggregate(Spline(tension=0.0), y, t1, t2)
+            r_tension   = disaggregate(Spline(tension=5.0), y, t1, t2)
             @test length(r_tension.signal) == length(r_notension.signal)
             @test all(isfinite, r_tension.signal)
             # High tension should reduce peak-to-peak range toward piecewise-linear behaviour
@@ -221,8 +240,8 @@ end
                  B_true * TD._interval_cos_integral(t1_dec[i], t2_dec[i])
                  for i in eachindex(t1_dec)]
 
-            result = disaggregate(y, t1_dates, t2_dates; method = :sinusoid,
-                                  smoothness_interannual = 1e-6)
+            result = disaggregate(Sinusoid(smoothness_interannual=1e-6),
+                                  y, t1_dates, t2_dates)
             @test metadata(result)[:amplitude] ≈ amp_true   atol=0.05
             @test metadata(result)[:phase]     ≈ phase_true atol=0.05
             @test metadata(result)[:trend]     ≈ 0.0        atol=0.05
@@ -231,7 +250,7 @@ end
         @testset "Inter-annual dict has correct year keys" begin
             t1, t2 = make_monthly_intervals(Date(2019, 6, 1), 24)
             y = ones(24)
-            result = disaggregate(y, t1, t2; method = :sinusoid)
+            result = disaggregate(Sinusoid(), y, t1, t2)
             @test metadata(result)[:interannual] isa Dict
             # Should contain years 2019, 2020, 2021
             for yr in [2019, 2020, 2021]
@@ -242,23 +261,23 @@ end
         @testset "L1 vs L2 agree on clean data" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [2.0 + sin(2π * i / 12) for i in 1:24]
-            r_l2 = disaggregate(y, t1, t2; method = :sinusoid, loss_norm = :L2)
-            r_l1 = disaggregate(y, t1, t2; method = :sinusoid, loss_norm = :L1)
+            r_l2 = disaggregate(Sinusoid(), y, t1, t2; loss_norm = :L2)
+            r_l1 = disaggregate(Sinusoid(), y, t1, t2; loss_norm = :L1)
             @test cor(Array(r_l2.signal), Array(r_l1.signal)) > 0.99
         end
 
-        @testset "output_step = Day(1)" begin
+        @testset "output_period = Day(1)" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             y = ones(12)
-            r_monthly = disaggregate(y, t1, t2; method = :sinusoid)
-            r_daily   = disaggregate(y, t1, t2; method = :sinusoid, output_step = Day(1))
+            r_monthly = disaggregate(Sinusoid(), y, t1, t2)
+            r_daily   = disaggregate(Sinusoid(), y, t1, t2; output_period = Day(1))
             @test length(r_daily.signal) > length(r_monthly.signal)
             @test all(isfinite, r_daily.signal)
         end
 
         @testset "Return fields present" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
-            result = disaggregate(ones(12), t1, t2; method = :sinusoid)
+            result = disaggregate(Sinusoid(), ones(12), t1, t2)
             @test result isa DimStack
             @test result.signal isa DimArray
             @test result.std    isa DimArray
@@ -280,7 +299,7 @@ end
         @testset "Returns DimStack with std ≥ 0" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [sin(2π * i / 12) for i in 1:24]
-            result = disaggregate(y, t1, t2; method = :gp, obs_noise = 0.1)
+            result = disaggregate(GP(obs_noise=0.1), y, t1, t2)
             @test result isa DimStack
             @test result.signal isa DimArray
             @test result.std    isa DimArray
@@ -291,12 +310,12 @@ end
             @test all(isfinite, result.std)
         end
 
-        @testset "output_step = Day(1) triggers kriging path" begin
+        @testset "output_period = Day(1) triggers kriging path" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             y = ones(12)
-            r_monthly = disaggregate(y, t1, t2; method = :gp, obs_noise = 0.1)
-            r_daily   = disaggregate(y, t1, t2; method = :gp, obs_noise = 0.1,
-                                     output_step = Day(1))
+            r_monthly = disaggregate(GP(obs_noise=0.1), y, t1, t2)
+            r_daily   = disaggregate(GP(obs_noise=0.1), y, t1, t2;
+                                     output_period = Day(1))
             @test length(r_daily.signal) > length(r_monthly.signal)
             @test all(Array(r_daily.std) .>= 0.0)
             @test all(isfinite, r_daily.signal)
@@ -307,14 +326,14 @@ end
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 36)
             c = 7.5
             y = fill(c, 36)
-            result = disaggregate(y, t1, t2; method = :gp, obs_noise = 1e-6)
+            result = disaggregate(GP(obs_noise=1e-6), y, t1, t2)
             @test mean(result.signal) ≈ c atol=1.0
         end
 
         @testset "L1 loss returns valid result" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [sin(2π * i / 12) for i in 1:24]
-            result = disaggregate(y, t1, t2; method = :gp, obs_noise = 0.1,
+            result = disaggregate(GP(obs_noise=0.1), y, t1, t2;
                                   loss_norm = :L1)
             @test all(Array(result.std) .>= 0.0)
             @test all(isfinite, result.signal)
@@ -322,24 +341,17 @@ end
     end
 
     # ─────────────────────────────────────────────────────────────────────────
-    @testset "Top-level disaggregate dispatcher" begin
+    @testset "All methods callable via disaggregate" begin
         t1, t2 = make_monthly_intervals(Date(2021, 1, 1), 12)
         y = ones(12)
 
-        # All three methods callable via disaggregate
-        r_spline = disaggregate(y, t1, t2; method = :spline)
-        r_sin    = disaggregate(y, t1, t2; method = :sinusoid)
-        r_gp     = disaggregate(y, t1, t2; method = :gp)
+        r_spline = disaggregate(Spline(), y, t1, t2)
+        r_sin    = disaggregate(Sinusoid(), y, t1, t2)
+        r_gp     = disaggregate(GP(), y, t1, t2)
 
         @test r_spline isa DimStack && hasdim(r_spline.signal, Ti)
         @test haskey(metadata(r_sin), :mean)
         @test r_gp.std isa DimArray
-
-        # Default method is :spline — returns DimStack with std
-        r_default = disaggregate(y, t1, t2)
-        @test r_default isa DimStack
-        @test hasdim(r_default.signal, Ti)
-        @test r_default.std isa DimArray
     end
 
 end

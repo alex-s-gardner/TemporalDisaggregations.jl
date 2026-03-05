@@ -34,56 +34,13 @@ Fraction of the interval [t1, t2] that falls within calendar year `yr`
     max(0.0, hi - lo) / (t2 - t1)
 end
 
-"""
-    disaggregate_sinusoid(aggregate_values, interval_start, interval_end;
-                            smoothness_interannual = 1e-2,
-                            loss_norm              = :L2)
-
-Reconstruct an instantaneous time series from interval-averaged observations by fitting
-the parametric model
-
-    x(t) = μ + β·(t − t̄) + γ(year(t)) + A·sin(2πt) + B·cos(2πt)
-
-where
-- `μ`         — overall mean,
-- `β`         — linear trend (units per year),
-- `γ(year)`   — inter-annual anomaly for each calendar year (one scalar per year),
-- `A`, `B`    — cosine and sine amplitudes of the annual seasonal cycle;
-                seasonal amplitude = √(A²+B²), peak time = atan(B,A)/(2π) yr.
-
-All five components are fit **simultaneously** via weighted least squares. Because every
-term integrates analytically over arbitrary intervals, no quadrature is required. The
-design matrix is constructed in closed form:
-
-    D[i, ·] = [1,  (t̄ᵢ−t̄),  overlap(i,yr₁)/Δtᵢ, …,  ⟨sin⟩ᵢ,  ⟨cos⟩ᵢ]
-
-where t̄ᵢ = (t1ᵢ+t2ᵢ)/2 is the interval midpoint and ⟨·⟩ᵢ denotes the interval average.
-
-The inter-annual anomalies are L2-regularised toward zero with strength
-`smoothness_interannual`; set it higher to suppress year-to-year variation.
-
-# Arguments
-- `aggregate_values`: Vector of n observed averages over each time interval.
-- `interval_start`, `interval_end`: Interval boundaries as `Date` or `DateTime` values.
-- `smoothness_interannual`: Ridge penalty on inter-annual anomalies γ. Default `1e-2`.
-- `loss_norm`: Loss function for the data-fit term. `:L2` (default) minimises the
-  weighted sum of squared residuals. `:L1` uses Iteratively Reweighted Least Squares
-  (IRLS) to minimise the sum of absolute residuals, which is more robust to outliers.
-- `output_period`: Temporal resolution of the output grid as a `Dates.Period`
-  (e.g. `Day(1)`, `Week(1)`, `Month(3)`). Default `Month(1)`.
-
-# Returns
-`DimStack` with layers `values` and `std`, both `DimArray` with a `Ti(dates)` dimension.
-`metadata(result)` returns a `Dict` with keys `:method`, `:mean`, `:trend`, `:amplitude`,
-`:phase`, and `:interannual`. Uncertainty is WLS covariance propagation; approximate for `:L1`.
-"""
-function disaggregate_sinusoid(aggregate_values::AbstractVector,
-                                 interval_start::AbstractVector{<:Dates.TimeType},
-                                 interval_end::AbstractVector{<:Dates.TimeType};
-                                 smoothness_interannual::Real = 1e-2,
-                                 loss_norm::Symbol            = :L2,
-                                 output_period::Dates.Period    = Month(1),
-                                 output_start::Union{Date,Nothing} = nothing)
+function disaggregate(m::Sinusoid,
+                      aggregate_values::AbstractVector,
+                      interval_start::AbstractVector{<:Dates.TimeType},
+                      interval_end::AbstractVector{<:Dates.TimeType};
+                      loss_norm::Symbol            = :L2,
+                      output_period::Dates.Period  = Month(1),
+                      output_start::Union{Date,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -127,7 +84,7 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
 
     # ── L2 regularisation on inter-annual anomalies only ─────────────────────
     λ_vec             = zeros(n_params)
-    λ_vec[3:2+n_years] .= Float64(smoothness_interannual)
+    λ_vec[3:2+n_years] .= m.smoothness_interannual
     Λ                 = Diagonal(λ_vec)
 
     # ── Weighted least-squares solve ──────────────────────────────────────────
@@ -218,7 +175,7 @@ function disaggregate_sinusoid(aggregate_values::AbstractVector,
          std    = DimArray(std_vec, Ti(out_dates)));
         metadata = Dict(
             :method                 => :sinusoid,
-            :smoothness_interannual => smoothness_interannual,
+            :smoothness_interannual => m.smoothness_interannual,
             :loss_norm              => loss_norm,
             :output_period    => output_period,
             :mean                   => μ_fit,
