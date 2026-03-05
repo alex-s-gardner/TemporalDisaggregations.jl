@@ -37,4 +37,4 @@ When intervals are irregular, overlapping, or sparse, standard interpolation fai
 
 In math: `yᵢ ≈ (1/Δtᵢ) ∫_{t1ᵢ}^{t2ᵢ} x(t) dt`
 
-![Overview of all three methods](../images/overview.png)
+![Overview of all three methods](./assets/overview.png)

@@ -18,7 +18,7 @@ result = disaggregate(y, t1, t2;
 
 **Uncertainty:** Confidence band derived from how strongly regularisation constrains the fit.
 
-![B-spline reconstruction](../images/spline_detail.png)
+![B-spline reconstruction](./assets/spline_detail.png)
 
 ## Tension-spline (`method = :spline`, `tension > 0`)
 
@@ -33,7 +33,7 @@ result = disaggregate(y, t1, t2;
 )
 ```
 
-![Tension-spline reconstruction](../images/tension_spline_detail.png)
+![Tension-spline reconstruction](./assets/tension_spline_detail.png)
 
 ## Sinusoid (`method = :sinusoid`)
 
@@ -63,7 +63,7 @@ md[:interannual]  # Dict{Int,Float64} of per-year anomalies
 
 **Uncertainty:** Propagated from fitted model coefficients via weighted least squares.
 
-![Sinusoid reconstruction](../images/sinusoid_detail.png)
+![Sinusoid reconstruction](./assets/sinusoid_detail.png)
 
 ## Gaussian Process (`method = :gp`)
 
@@ -86,7 +86,7 @@ result = disaggregate(y, t1, t2;
 
 **Uncertainty:** Full GP posterior standard deviation — a true probabilistic credible interval given the chosen kernel.
 
-![GP posterior mean and 2σ band](../images/gp_detail.png)
+![GP posterior mean and 2σ band](./assets/gp_detail.png)
 
 ## Uncertainty Comparison
 
