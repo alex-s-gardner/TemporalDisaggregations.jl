@@ -81,12 +81,12 @@ t_axis(r) = decimal_year.(dims(r, Ti).val)
 
 println("\n── Figure 1: small n, all three methods ──")
 
-r_sp  = disaggregate(y_small, t1_small, t2_small; method = :spline)
-r_sin = disaggregate(y_small, t1_small, t2_small; method = :sinusoid)
+r_sp  = disaggregate(Spline(), y_small, t1_small, t2_small)
+r_sin = disaggregate(Sinusoid(), y_small, t1_small, t2_small)
 kern = 12.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
        4.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
-r_gp  = disaggregate(y_small, t1_small, t2_small;
-                     method = :gp, obs_noise = noise_std^2, kernel = kern)
+r_gp  = disaggregate(GP(obs_noise = noise_std^2, kernel = kern),
+                     y_small, t1_small, t2_small)
 
 t_out_s = t_axis(r_sp)
 sp_μ  = r_sp.signal.data;   sp_σ  = r_sp.std.data
@@ -113,7 +113,7 @@ lines!(ax1a, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
 axislegend(ax1a; position = :lt, labelsize = 11)
 
 ax1b = Axis(fig1[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Spline (method=:spline)")
+    title = "Spline")
 band!(ax1b, t_out_s, sp_μ .- 2sp_σ, sp_μ .+ 2sp_σ;
     color = (:steelblue, 0.2), label = "± 2σ")
 lines!(ax1b, t_out_s, sp_μ; color = :steelblue, linewidth = 2.5,
@@ -123,7 +123,7 @@ lines!(ax1b, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
 axislegend(ax1b; position = :lt, labelsize = 11)
 
 ax1c = Axis(fig1[2, 1]; xlabel = "Year", ylabel = "Signal",
-    title = "Sinusoid (method=:sinusoid) — fastest; assumes seasonal shape")
+    title = "Sinusoid — fastest; assumes seasonal shape")
 band!(ax1c, t_out_s, sin_μ .- 2sin_σ, sin_μ .+ 2sin_σ;
     color = (:darkorange, 0.2), label = "± 2σ")
 lines!(ax1c, t_out_s, sin_μ; color = :darkorange, linewidth = 2.5,
@@ -133,7 +133,7 @@ lines!(ax1c, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
 axislegend(ax1c; position = :lt, labelsize = 11)
 
 ax1d = Axis(fig1[2, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "GP (method=:gp) — most meaningful uncertainty for sparse data")
+    title = "GP — most meaningful uncertainty for sparse data")
 band!(ax1d, t_out_s, gp_μ .- 2gp_σ, gp_μ .+ 2gp_σ;
     color = (:crimson, 0.2), label = "± 2σ")
 lines!(ax1d, t_out_s, gp_μ; color = :crimson, linewidth = 2.5,
@@ -157,12 +157,12 @@ println("Saved fig1_small_n_three_methods.png")
 
 println("\n── Figure 2: large n ($n_large observations), timing ──")
 
-print("  Spline:   "); @time r_sp_l  = disaggregate(y_large, t1_large, t2_large;
-                                                      method = :spline, smoothness = 1e-4)
-print("  Sinusoid: "); @time r_sin_l = disaggregate(y_large, t1_large, t2_large;
-                                                      method = :sinusoid)
-print("  GP:       "); @time r_gp_l  = disaggregate(y_large, t1_large, t2_large;
-                                                      method = :gp, obs_noise = noise_std^2)
+print("  Spline:   "); @time r_sp_l  = disaggregate(Spline(smoothness = 1e-4),
+                                                      y_large, t1_large, t2_large)
+print("  Sinusoid: "); @time r_sin_l = disaggregate(Sinusoid(),
+                                                      y_large, t1_large, t2_large)
+print("  GP:       "); @time r_gp_l  = disaggregate(GP(obs_noise = noise_std^2),
+                                                      y_large, t1_large, t2_large)
 
 t_out_l  = t_axis(r_sp_l)
 sp_μ_l   = r_sp_l.signal.data
@@ -212,12 +212,12 @@ smoothness_vals = [1e-5, 1e-3, 1e-1]
 tension_vals    = [0.0, 1.0, 10.0]
 
 # Row 1: vary smoothness at tension = 0
-r_sp_row1 = [disaggregate(y_small, t1_small, t2_small;
-                           method = :spline, smoothness = s, tension = 0.0)
+r_sp_row1 = [disaggregate(Spline(smoothness = s, tension = 0.0),
+                          y_small, t1_small, t2_small)
              for s in smoothness_vals]
 # Row 2: vary tension at smoothness = 1e-3
-r_sp_row2 = [disaggregate(y_small, t1_small, t2_small;
-                           method = :spline, smoothness = 1e-3, tension = τ)
+r_sp_row2 = [disaggregate(Spline(smoothness = 1e-3, tension = τ),
+                          y_small, t1_small, t2_small)
              for τ in tension_vals]
 
 fig3 = Figure(size = (1100, 600), fontsize = 11);
@@ -263,8 +263,8 @@ println("Saved fig3_spline_kwargs.png")
 
 println("\n── Figure 4: sinusoid parameter decomposition ──")
 
-r_sin2 = disaggregate(y_small, t1_small, t2_small;
-                       method = :sinusoid, smoothness_interannual = 1e-2)
+r_sin2 = disaggregate(Sinusoid(smoothness_interannual = 1e-2),
+                       y_small, t1_small, t2_small)
 md = DimensionalData.metadata(r_sin2)
 
 t_out_s2  = t_axis(r_sin2)
@@ -339,8 +339,8 @@ kernel_names = ["Default: Matérn-5/2 (ℓ=2 months)",
                 "Seasonal: PeriodicKernel × Matérn + slow Matérn",
                 "Long-scale: Matérn-5/2 (ℓ=2 years)"]
 
-r_gp_kernels = [disaggregate(y_small, t1_small, t2_small;
-                              method = :gp, kernel = k, obs_noise = noise_std^2)
+r_gp_kernels = [disaggregate(GP(kernel = k, obs_noise = noise_std^2),
+                             y_small, t1_small, t2_small)
                 for k in kernels]
 
 colors_gp = [:crimson, :darkgreen, :purple]
@@ -374,10 +374,10 @@ y_blundered = copy(y_small)
 blunder_idx = [3, round(Int, n_small ÷ 2), n_small - 2]
 y_blundered[blunder_idx] .+= 5 * std(y_small)
 
-r_l2 = disaggregate(y_blundered, t1_small, t2_small;
-                     method = :spline, loss_norm = :L2)
-r_l1 = disaggregate(y_blundered, t1_small, t2_small;
-                     method = :spline, loss_norm = :L1)
+r_l2 = disaggregate(Spline(), y_blundered, t1_small, t2_small;
+                     loss_norm = :L2)
+r_l1 = disaggregate(Spline(), y_blundered, t1_small, t2_small;
+                     loss_norm = :L1)
 
 t_bl   = t_axis(r_l2)
 l2_μ   = r_l2.signal.data;  l2_σ  = r_l2.std.data
@@ -428,10 +428,10 @@ println("Saved fig6_l1_vs_l2.png")
 
 println("\n── Figure 7: output grid options ──")
 
-r_monthly = disaggregate(y_large, t1_large, t2_large; method = :spline)
-r_daily   = disaggregate(y_large, t1_large, t2_large; method = :spline,
+r_monthly = disaggregate(Spline(), y_large, t1_large, t2_large)
+r_daily   = disaggregate(Spline(), y_large, t1_large, t2_large;
                           output_period = Day(1))
-r_15th    = disaggregate(y_large, t1_large, t2_large; method = :spline,
+r_15th    = disaggregate(Spline(), y_large, t1_large, t2_large;
                           output_start  = Date(2020, 1, 15))
 
 t_mon   = t_axis(r_monthly)
