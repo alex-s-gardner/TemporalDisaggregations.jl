@@ -15,7 +15,7 @@ Reconstruct an instantaneous time series from interval-averaged observations.
 - `interval_start`, `interval_end`: Interval boundaries as `Date`/`DateTime`.
 - `loss_norm::Symbol = :L2`: `:L2` or `:L1` (robust to outliers via IRLS).
 - `output_period::Dates.Period = Month(1)`: Output grid spacing.
-- `output_start`: Grid anchor date (default `nothing`).
+- `output_start`: Grid anchor `Date` or `DateTime` (default `nothing`).
 
 # Returns
 `DimStack` with `:signal` and `:std` layers indexed by `Ti(dates)`.

@@ -36,6 +36,7 @@ r_sin    = disaggregate(Sinusoid(smoothness_interannual = 1e-2), y, t1, t2)
 k = 15.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
      5.0^2 * with_lengthscale(Matern52Kernel(), 2.0) +
      3.0^2 * with_lengthscale(Matern32Kernel(), 1/12)
+     
 r_gp = disaggregate(GP(kernel = k, obs_noise = noise_std^2, n_quad = 5), y, t1, t2)
 
 # Extract plain Float64 vectors (avoids Makie/DimensionalData extension conflicts)

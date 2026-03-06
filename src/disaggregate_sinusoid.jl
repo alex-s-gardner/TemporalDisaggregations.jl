@@ -40,7 +40,7 @@ function disaggregate(m::Sinusoid,
                       interval_end::AbstractVector{<:Dates.TimeType};
                       loss_norm::Symbol            = :L2,
                       output_period::Dates.Period  = Month(1),
-                      output_start::Union{Date,Nothing} = nothing)
+                      output_start::Union{Dates.TimeType,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||

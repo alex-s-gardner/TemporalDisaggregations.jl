@@ -11,7 +11,7 @@ function disaggregate(m::GP,
                       interval_end::AbstractVector{<:Dates.TimeType};
                       loss_norm::Symbol = :L2,
                       output_period::Dates.Period = Month(1),
-                      output_start::Union{Date,Nothing} = nothing)
+                      output_start::Union{Dates.TimeType,Nothing} = nothing)
 
     σ²  = m.obs_noise
     n   = length(aggregate_values)
@@ -30,7 +30,7 @@ function disaggregate(m::GP,
     order = sortperm(interval_start)
     t1    = decimal_year.(interval_start[order])
     t2    = decimal_year.(interval_end[order])
-    y     = Float64.(aggregate_values[order])
+    y     = Array(aggregate_values[order])
 
     # ── Monthly inducing grid (always monthly for O(n_ind³) tractability) ──────
     monthly_dates, Z = _monthly_decimal_year_grid(t1[1], t2[end])
