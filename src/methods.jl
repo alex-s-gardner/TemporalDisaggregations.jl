@@ -50,7 +50,12 @@ Supports arbitrary `KernelFunctions.jl` kernels (sums, products, periodic, etc.)
 
 # Keywords
 - `kernel`: Any `KernelFunctions.jl` kernel. Default: Matérn-5/2 with 2-month lengthscale.
-- `obs_noise::Float64 = 1.0`: Observation noise variance σ².
+  The kernel's **output scale must match the variance of your data**. A unit-variance kernel
+  (e.g. `SqExponentialKernel()`) implicitly assumes signal amplitude ≈ 1; for data with
+  standard deviation σ, use `σ^2 * SqExponentialKernel()` (or the equivalent for any kernel).
+- `obs_noise::Float64 = 1.0`: Observation noise variance σ² **in the same units as y²**.
+  Set to `var(y) * snr⁻¹` where `snr` is the expected signal-to-noise ratio, or tune
+  relative to the kernel's output scale.
 - `n_quad::Int = 5`: Gauss-Legendre quadrature points per interval.
 """
 @kwdef struct GP{K} <: DisaggregationMethod

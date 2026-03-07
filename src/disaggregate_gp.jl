@@ -75,7 +75,7 @@ function disaggregate(m::GP,
 
     # ── L1: IRLS refinement (skipped for :L2) ─────────────────────────────────
     # Replace W=I with per-obs weights w_irls[i] = 1/(|r_i|+ε), iterate to convergence.
-    # Residuals use C*v (= C K⁻¹ μ_Z = predicted interval averages), not C*μ_Z.
+    # Predicted interval averages are C*μ_Z (not C*v, which is the Woodbury intermediate).
     if loss_norm == :L1
         ε_irls = 1e-6 * (std(y) + 1e-10)
         w_irls = ones(n)
@@ -87,10 +87,9 @@ function disaggregate(m::GP,
             CtWy       = C' * W_eff * y
             v          = L_M \ CtWy
             μ_Z_new    = (CtWy .- S_W * v) ./ σ²
-            r          = y .- C * v
-            w_irls_new = _irls_weights(r, ε_irls)
-            _irls_converged(w_irls_new, w_irls) && (μ_Z = μ_Z_new; break)
-            w_irls = w_irls_new
+            r          = y .- C * μ_Z_new
+            w_irls     = _irls_weights(r, ε_irls)
+            _irls_converged(μ_Z_new, μ_Z) && (μ_Z = μ_Z_new; break)
             μ_Z = μ_Z_new
         end
     end
