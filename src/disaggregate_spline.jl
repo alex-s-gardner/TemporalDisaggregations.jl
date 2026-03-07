@@ -9,7 +9,7 @@ function disaggregate(m::Spline,
                       interval_end::AbstractVector{<:Dates.TimeType};
                       loss_norm::Symbol = :L2,
                       output_period::Dates.Period = Month(1),
-                      output_start::Union{Date,Nothing} = nothing)
+                      output_start::Union{Dates.TimeType,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -29,7 +29,7 @@ function disaggregate(m::Spline,
     order = sortperm(interval_start)
     t1    = decimal_year.(interval_start[order])
     t2    = decimal_year.(interval_end[order])
-    y     = Float64.(aggregate_values[order])
+    y     = aggregate_values[order]
 
     # Quartic (p=4) B-spline space for F(t); x(t) = F′(t) is cubic.
     # Knot placement is the primary control over smoothness:
@@ -66,7 +66,7 @@ function disaggregate(m::Spline,
     # Normalise each row by the interval length so we fit interval averages (y)
     # rather than interval totals (areas).  This gives equal weight to every
     # observation regardless of length and keeps RSS in signal² units.
-    Δt     = t2 .- t1
+    Δt     = Array(t2 .- t1)
     C_norm = C ./ Δt
 
     # P-spline penalty of order `penalty_order`: ‖Dᵣ a‖²
