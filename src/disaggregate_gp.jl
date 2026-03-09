@@ -4,7 +4,8 @@ function disaggregate(m::GP,
                       interval_end::AbstractVector{<:Dates.TimeType};
                       loss_norm::Symbol = :L2,
                       output_period::Dates.Period = Month(1),
-                      output_start::Union{Dates.TimeType,Nothing} = nothing)
+                      output_start::Union{Dates.TimeType,Nothing} = nothing,
+                      output_end::Union{Dates.TimeType,Nothing} = nothing)
 
     σ²  = m.obs_noise
     n   = length(aggregate_values)
@@ -31,9 +32,10 @@ function disaggregate(m::GP,
 
     # ── Output grid (may differ from inducing grid) ────────────────────────────
     # Use inducing grid directly only when output is default monthly-on-1st.
-    use_inducing_as_output = output_period == Month(1) && isnothing(output_start)
+    use_inducing_as_output = output_period == Month(1) && isnothing(output_start) && isnothing(output_end)
+    t_out_end = isnothing(output_end) ? t2[end] : yeardecimal(output_end)
     out_dates, Z_out = use_inducing_as_output ?
-        (monthly_dates, Z) : _date_grid(t1[1], t2[end], output_period; output_start)
+        (monthly_dates, Z) : _date_grid(t1[1], t_out_end, output_period; output_start)
 
     # ── Gauss-Legendre quadrature ─────────────────────────────────────────────
     # GL weights sum to 2 on [−1, 1]; dividing by 2 gives a mean-approximation

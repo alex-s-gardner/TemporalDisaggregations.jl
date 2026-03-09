@@ -4,7 +4,8 @@ function disaggregate(m::Spline,
                       interval_end::AbstractVector{<:Dates.TimeType};
                       loss_norm::Symbol = :L2,
                       output_period::Dates.Period = Month(1),
-                      output_start::Union{Dates.TimeType,Nothing} = nothing)
+                      output_start::Union{Dates.TimeType,Nothing} = nothing,
+                      output_end::Union{Dates.TimeType,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -103,7 +104,8 @@ function disaggregate(m::Spline,
     dP_F = BasicBSpline.derivative(P_F)
 
     # Evaluate on the output grid clamped to the data domain
-    out_dates, eval_times = _date_grid(t_nodes[1], t_nodes[end], output_period; output_start)
+    t_out_end = isnothing(output_end) ? t_nodes[end] : yeardecimal(output_end)
+    out_dates, eval_times = _date_grid(t_nodes[1], t_out_end, output_period; output_start)
     eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
 
     values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:n_basis) for t in eval_times]

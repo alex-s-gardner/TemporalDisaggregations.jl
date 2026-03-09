@@ -752,7 +752,7 @@ uuid = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
 version = "1.10.0"
 
 [[deps.TemporalDisaggregation]]
-deps = ["AbstractGPs", "BasicBSpline", "Dates", "DimensionalData", "DocumenterTools", "FastGaussQuadrature", "KernelFunctions", "LinearAlgebra", "Statistics"]
+deps = ["AbstractGPs", "BasicBSpline", "DateFormats", "Dates", "DimensionalData", "DocumenterTools", "FastGaussQuadrature", "KernelFunctions", "LinearAlgebra", "Statistics"]
 path = "."
 uuid = "88cf798b-2db9-4742-8b85-510f6e476edb"
 version = "0.0.1"

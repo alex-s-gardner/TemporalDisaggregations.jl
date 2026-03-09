@@ -36,7 +36,8 @@ function disaggregate(m::Sinusoid,
                       interval_end::AbstractVector{<:Dates.TimeType};
                       loss_norm::Symbol            = :L2,
                       output_period::Dates.Period  = Month(1),
-                      output_start::Union{Dates.TimeType,Nothing} = nothing)
+                      output_start::Union{Dates.TimeType,Nothing} = nothing,
+                      output_end::Union{Dates.TimeType,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -112,7 +113,8 @@ function disaggregate(m::Sinusoid,
     seasonal_phase     = mod(atan(B_fit, A_fit) / (2π), 1.0)
 
     # ── Evaluate on output grid ───────────────────────────────────────────────
-    out_dates, eval_times = _date_grid(t1[1], t2[end], output_period; output_start)
+    t_out_end = isnothing(output_end) ? t2[end] : yeardecimal(output_end)
+    out_dates, eval_times = _date_grid(t1[1], t_out_end, output_period; output_start)
 
     # Interpolate interannual anomalies with a natural cubic spline through year
     # centres (year + 0.5, γ_year), then add trend, offset, and seasonality.
