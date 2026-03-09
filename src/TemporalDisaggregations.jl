@@ -1,6 +1,14 @@
 module TemporalDisaggregations
 
+    using Dates
+    using BasicBSpline
+    using Statistics
+    using LinearAlgebra
+    using AbstractGPs
+    using KernelFunctions
+    using FastGaussQuadrature
     using DimensionalData: DimStack, DimArray, Ti
+    using DateFormats: yeardecimal
 
     include("utils.jl")
     include("methods.jl")
@@ -9,7 +17,7 @@ module TemporalDisaggregations
     include("disaggregate_gp.jl")
     include("disaggregate.jl")
 
-    export disaggregate, decimal_year,
+    export disaggregate, yeardecimal,
         DisaggregationMethod, Spline, Sinusoid, GP
 
 end

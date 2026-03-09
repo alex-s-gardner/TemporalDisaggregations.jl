@@ -1,10 +1,3 @@
-using AbstractGPs
-using KernelFunctions
-using FastGaussQuadrature
-using LinearAlgebra
-using Dates
-using Statistics
-
 function disaggregate(m::GP,
                       aggregate_values::AbstractVector,
                       interval_start::AbstractVector{<:Dates.TimeType},
@@ -28,12 +21,12 @@ function disaggregate(m::GP,
         throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
 
     order = sortperm(interval_start)
-    t1    = decimal_year.(interval_start[order])
-    t2    = decimal_year.(interval_end[order])
+    t1    = yeardecimal.(interval_start[order])
+    t2    = yeardecimal.(interval_end[order])
     y     = Array(aggregate_values[order])
 
     # ── Monthly inducing grid (always monthly for O(n_ind³) tractability) ──────
-    monthly_dates, Z = _monthly_decimal_year_grid(t1[1], t2[end])
+    monthly_dates, Z = _monthly_yeardecimal_grid(t1[1], t2[end])
     n_ind = length(Z)
 
     # ── Output grid (may differ from inducing grid) ────────────────────────────

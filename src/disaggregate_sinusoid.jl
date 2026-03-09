@@ -1,7 +1,3 @@
-using LinearAlgebra
-using Dates
-using Statistics
-
 """
     _interval_sin_integral(t1, t2)
 
@@ -54,8 +50,8 @@ function disaggregate(m::Sinusoid,
 
     # Sort chronologically
     order = sortperm(interval_start)
-    t1    = decimal_year.(interval_start[order])
-    t2    = decimal_year.(interval_end[order])
+    t1    = yeardecimal.(interval_start[order])
+    t2    = yeardecimal.(interval_end[order])
     y     = Float64.(aggregate_values[order])
 
     # ── Parameter layout ──────────────────────────────────────────────────────

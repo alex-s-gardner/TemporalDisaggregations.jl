@@ -1,8 +1,3 @@
-using BasicBSpline
-using Dates
-using Statistics
-using LinearAlgebra
-
 function disaggregate(m::Spline,
                       aggregate_values::AbstractVector,
                       interval_start::AbstractVector{<:Dates.TimeType},
@@ -27,8 +22,8 @@ function disaggregate(m::Spline,
 
     # Sort intervals chronologically
     order = sortperm(interval_start)
-    t1    = decimal_year.(interval_start[order])
-    t2    = decimal_year.(interval_end[order])
+    t1    = yeardecimal.(interval_start[order])
+    t2    = yeardecimal.(interval_end[order])
     y     = aggregate_values[order]
 
     # Quartic (p=4) B-spline space for F(t); x(t) = F′(t) is cubic.

@@ -4,7 +4,7 @@
 
 ```@docs
 disaggregate
-decimal_year
+yeardecimal
 DisaggregationMethod
 Spline
 Sinusoid

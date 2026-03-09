@@ -5,20 +5,20 @@ using LinearAlgebra
 # Time helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-decimal_year(d::Dates.Date)::Float64 =
+yeardecimal(d::Dates.Date)::Float64 =
     year(d) + (d - Date(year(d), 1, 1)).value / (isleapyear(year(d)) ? 366.0 : 365.0)
 
-decimal_year(dt::Dates.DateTime)::Float64 =
+yeardecimal(dt::Dates.DateTime)::Float64 =
     year(dt) + (dt - DateTime(year(dt), 1, 1)).value /
                (86_400_000.0 * (isleapyear(year(dt)) ? 366 : 365))
 
 """
-    _monthly_decimal_year_grid(t_min, t_max)
+    _monthly_yeardecimal_grid(t_min, t_max)
 
-Return `(dates, decimal_years)` for a monthly `Date` grid covering `[t_min, t_max]`,
+Return `(dates, yeardecimals)` for a monthly `Date` grid covering `[t_min, t_max]`,
 where both arguments are decimal years (e.g. `2020.5` = mid-2020).
 """
-function _monthly_decimal_year_grid(t_min::Real, t_max::Real)
+function _monthly_yeardecimal_grid(t_min::Real, t_max::Real)
     y0 = floor(Int, t_min)
     m0 = clamp(floor(Int, (t_min - y0) * 12) + 1, 1, 12)
     y1 = floor(Int, t_max)
@@ -31,7 +31,7 @@ end
 """
     _date_grid(t_min, t_max, step; output_start=nothing)
 
-Return `(dates, decimal_years)` for a `Date` grid covering `[t_min, t_max]` with the
+Return `(dates, yeardecimals)` for a `Date` grid covering `[t_min, t_max]` with the
 given `step` (any `Dates.Period`), where both bounds are decimal years.
 
 If `output_start` is provided, it anchors the grid:
@@ -56,7 +56,7 @@ function _date_grid(t_min::Real, t_max::Real, step::Dates.Period;
     d1_date = Date(yr1, 1, 1) + Day(floor(Int, (t_max - yr1) * ndays1))
     d_end   = sub_day ? DateTime(d1_date) : d1_date
     dates = collect(d_start:step:d_end)
-    times = decimal_year.(dates)
+    times = yeardecimal.(dates)
     return dates, times
 end
 

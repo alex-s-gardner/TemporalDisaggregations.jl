@@ -1,5 +1,3 @@
-using Dates
-
 """
     disaggregate(method, aggregate_values, interval_start, interval_end;
                  loss_norm=:L2, output_period=Month(1), output_start=nothing)

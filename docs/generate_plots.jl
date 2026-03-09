@@ -10,7 +10,7 @@ Random.seed!(7)
 
 # ── Synthetic signal ──────────────────────────────────────────────────────────
 t_daily = DateTime(2015, 1, 1):Day(1):DateTime(2020, 1, 1)
-t_decyear = decimal_year.(t_daily)
+t_decyear = yeardecimal.(t_daily)
 
 seasonal_amp    = 15.0
 interannual_amp = 6.0
@@ -48,7 +48,7 @@ gp_μ = r_gp.signal.data
 gp_σ  = r_gp.std.data
 
 # Monthly time axis from the shared output grid
-t_output = decimal_year.(dims(r_spline, :Ti).val)
+t_output = yeardecimal.(dims(r_spline, :Ti).val)
 
 # ── Figure 1: overview of all three methods ───────────────────────────────────
 fig1 = Figure(size = (900, 480), fontsize = 13);
@@ -57,8 +57,8 @@ ax1 = Axis(fig1[1, 1];
     title  = "Temporal disaggregation: recover instantaneous signal from interval averages",
 )
 
-pt1 = Point2f.(decimal_year.(t1), y);
-pt2 = Point2f.(decimal_year.(t2), y);
+pt1 = Point2f.(yeardecimal.(t1), y);
+pt2 = Point2f.(yeardecimal.(t2), y);
 linesegments!(ax1, vcat(collect(zip(pt1, pt2))...);
     color = (:black, 0.35), linewidth = 2, label = "Interval averages (input)")
 lines!(ax1, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True instantaneous signal")
