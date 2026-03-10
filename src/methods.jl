@@ -16,6 +16,9 @@ Quartic B-spline antiderivative fit with P-spline regularization.
 Models the antiderivative F(t) as a B-spline so that F(t2ᵢ) − F(t1ᵢ) equals the
 observed area for each interval; the instantaneous signal is x(t) = F′(t).
 
+The `:std` layer in the returned `DimStack` is constant across the output grid and equals
+the residual standard deviation of predicted vs. observed interval averages: `std(y .- ŷ)`.
+
 # Keywords
 - `smoothness::Float64 = 1e-3`: Regularization strength λ (larger = smoother).
 - `n_knots::Union{Int,Nothing} = nothing`: Number of knots (`nothing` = auto monthly, `0` = dense).
@@ -34,6 +37,9 @@ end
 
 Parametric model: mean + trend + per-year anomalies + annual sinusoid.
 All interval integrals are solved analytically (no quadrature) — the fastest method.
+
+The `:std` layer in the returned `DimStack` is constant across the output grid and equals
+the residual standard deviation of predicted vs. observed interval averages: `std(y .- ŷ)`.
 
 # Keywords
 - `smoothness_interannual::Float64 = 1e-2`: Ridge penalty on inter-annual anomalies γ.

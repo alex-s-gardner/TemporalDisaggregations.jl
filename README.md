@@ -67,7 +67,7 @@ result = disaggregate(Spline(
 ), y, t1, t2; loss_norm = :L2)
 ```
 
-**Uncertainty:** Confidence band derived from how strongly the regularisation constrains the fit.
+**Uncertainty:** Constant `std` equal to the residual standard deviation of predicted vs. observed interval averages (`std(y .- ŷ)`). A single scalar that directly measures how well the fit reproduces the input data when re-integrated.
 
 ![B-spline reconstruction](docs/images/spline_detail.png)
 
@@ -108,7 +108,7 @@ md[:trend]        # linear trend (units/year)
 md[:interannual]  # Dict{Int,Float64} of per-year anomalies
 ```
 
-**Uncertainty:** Propagated from the fitted model coefficients via standard weighted least squares.
+**Uncertainty:** Constant `std` equal to the residual standard deviation of predicted vs. observed interval averages (`std(y .- ŷ)`). A single scalar that directly measures how well the parametric model reproduces the input data when re-integrated.
 
 ![Sinusoid reconstruction](docs/images/sinusoid_detail.png)
 
@@ -161,15 +161,15 @@ All methods support `loss_norm = :L1` for robustness to blunders (outliers). L1 
 result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = :L1)
 ```
 
-> Each method derives uncertainty differently, so the magnitude and shape of `std` reflects the method's statistical framework rather than a universal measure of confidence:
+> Each method derives uncertainty differently, so `std` reflects the method's statistical framework rather than a universal measure of confidence:
 >
 > | Method | What `std` measures | Key caveat |
 > |--------|---------------------|------------|
-> | **GP** | True Bayesian uncertainty from the GP model | Depends on your choice of kernel and `obs_noise` |
-> | **Spline** | How strongly the regularisation constrains the fit | Controlled by `smoothness`; does not account for uncertainty in the smoothness level itself |
-> | **Sinusoid** | Uncertainty in the fitted seasonal parameters | Only valid if the true signal is well-described by mean + trend + sinusoid |
+> | **GP** | True Bayesian posterior standard deviation | Depends on your choice of kernel and `obs_noise` |
+> | **Spline** | Residual std of predicted vs. observed interval averages (constant across output grid) | Measures fit quality, not smoothness-level uncertainty |
+> | **Sinusoid** | Residual std of predicted vs. observed interval averages (constant across output grid) | Only meaningful if the parametric model fits the data well |
 >
-> When using `loss_norm = :L1`, `std` is approximate — it is computed from the final reweighted system, not from L1 theory.
+> For Spline and Sinusoid, `std` is `std(y .- ŷ)` where `ŷ` is the fitted model re-integrated over each observation interval. When using `loss_norm = :L1`, this residual std is computed from the final IRLS solution.
 
 ## Return Type
 
