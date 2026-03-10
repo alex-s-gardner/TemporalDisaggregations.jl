@@ -27,29 +27,29 @@ end
 @testset "TemporalDisaggregations.jl" begin
 
     # ─────────────────────────────────────────────────────────────────────────
-    @testset "Helper: _decimal_year" begin
+    @testset "Helper: _yeardecimal" begin
         # Jan 1 of any year → exact integer
-        @test TD.decimal_year(Date(2020, 1, 1)) == 2020.0
-        @test TD.decimal_year(Date(2000, 1, 1)) == 2000.0
+        @test TD.yeardecimal(Date(2020, 1, 1)) == 2020.0
+        @test TD.yeardecimal(Date(2000, 1, 1)) == 2000.0
 
         # Mid-year for a non-leap year (2019): day 182/365 ≈ 0.4986
         # July 2 is day 183, so fraction = 182/365
         d_mid = Date(2019, 7, 2)   # day 183 → offset 182
         expected = 2019.0 + 182.0 / 365.0
-        @test TD.decimal_year(d_mid) ≈ expected atol=1e-12
+        @test TD.yeardecimal(d_mid) ≈ expected atol=1e-12
 
         # Leap year 2020: July 2 is day 184 → offset 183/366
         d_leap = Date(2020, 7, 2)
         expected_leap = 2020.0 + 183.0 / 366.0
-        @test TD.decimal_year(d_leap) ≈ expected_leap atol=1e-12
+        @test TD.yeardecimal(d_leap) ≈ expected_leap atol=1e-12
 
         # DateTime variant: Jan 1 midnight
-        @test TD.decimal_year(DateTime(2021, 1, 1, 0, 0, 0)) == 2021.0
+        @test TD.yeardecimal(DateTime(2021, 1, 1, 0, 0, 0)) == 2021.0
     end
 
     # ─────────────────────────────────────────────────────────────────────────
-    @testset "Helper: _monthly_decimal_year_grid" begin
-        dates, times = TD._monthly_decimal_year_grid(2020.0, 2021.0)
+    @testset "Helper: _monthly_yeardecimal_grid" begin
+        dates, times = TD._monthly_yeardecimal_grid(2020.0, 2021.0)
         @test first(dates) == Date(2020, 1, 1)
         @test last(dates)  == Date(2021, 1, 1)
         @test length(dates) == 13
@@ -66,9 +66,9 @@ end
         @test issorted(dates)
         @test all(isfinite, times)
 
-        # Monthly step should match _monthly_decimal_year_grid result
+        # Monthly step should match _monthly_yeardecimal_grid result
         dates_m, times_m = TD._date_grid(2020.0, 2021.0, Month(1))
-        dates_r, times_r = TD._monthly_decimal_year_grid(2020.0, 2021.0)
+        dates_r, times_r = TD._monthly_yeardecimal_grid(2020.0, 2021.0)
         @test dates_m == dates_r
     end
 
@@ -232,8 +232,8 @@ end
 
             # Compute exact interval averages for 36 monthly intervals
             t1_dates, t2_dates = make_monthly_intervals(Date(2018, 1, 1), 36)
-            t1_dec = TD.decimal_year.(t1_dates)
-            t2_dec = TD.decimal_year.(t2_dates)
+            t1_dec = TD.yeardecimal.(t1_dates)
+            t2_dec = TD.yeardecimal.(t2_dates)
 
             # Exact average of A*sin(2πt)+B*cos(2πt) over [t1,t2]
             y = [A_true * TD._interval_sin_integral(t1_dec[i], t2_dec[i]) +

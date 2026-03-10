@@ -10,7 +10,7 @@ Random.seed!(7)
 
 # ── Synthetic signal ──────────────────────────────────────────────────────────
 t_daily = DateTime(2015, 1, 1):Day(1):DateTime(2020, 1, 1)
-t_decyear = decimal_year.(t_daily)
+t_decyear = yeardecimal.(t_daily)
 
 seasonal_amp    = 15.0
 interannual_amp = 6.0
@@ -36,6 +36,7 @@ r_sin    = disaggregate(Sinusoid(smoothness_interannual = 1e-2), y, t1, t2)
 k = 15.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
      5.0^2 * with_lengthscale(Matern52Kernel(), 2.0) +
      3.0^2 * with_lengthscale(Matern32Kernel(), 1/12)
+     
 r_gp = disaggregate(GP(kernel = k, obs_noise = noise_std^2, n_quad = 5), y, t1, t2)
 
 # Extract plain Float64 vectors (avoids Makie/DimensionalData extension conflicts)
@@ -47,7 +48,7 @@ gp_μ = r_gp.signal.data
 gp_σ  = r_gp.std.data
 
 # Monthly time axis from the shared output grid
-t_output = decimal_year.(dims(r_spline, :Ti).val)
+t_output = yeardecimal.(dims(r_spline, :Ti).val)
 
 # ── Figure 1: overview of all three methods ───────────────────────────────────
 fig1 = Figure(size = (900, 480), fontsize = 13);
@@ -56,8 +57,8 @@ ax1 = Axis(fig1[1, 1];
     title  = "Temporal disaggregation: recover instantaneous signal from interval averages",
 )
 
-pt1 = Point2f.(decimal_year.(t1), y);
-pt2 = Point2f.(decimal_year.(t2), y);
+pt1 = Point2f.(yeardecimal.(t1), y);
+pt2 = Point2f.(yeardecimal.(t2), y);
 linesegments!(ax1, vcat(collect(zip(pt1, pt2))...);
     color = (:black, 0.35), linewidth = 2, label = "Interval averages (input)")
 lines!(ax1, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True instantaneous signal")
@@ -113,7 +114,7 @@ lines!(ax3a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax3a; position = :lt, framevisible = true, labelsize = 11)
 
 ax3b = Axis(fig3[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: B-spline mean ± 2σ")
+    title = "Output: B-spline mean ± 2·std(residuals)")
 band!(ax3b, t_output, sp_μ .- 2 .* sp_std, sp_μ .+ 2 .* sp_std;
     color = (:steelblue, 0.2), label = "± 2σ")
 lines!(ax3b, t_output, sp_μ; color = :steelblue, linewidth = 2.5, label = "B-spline mean")
@@ -134,7 +135,7 @@ lines!(ax4a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax4a; position = :lt, framevisible = true, labelsize = 11)
 
 ax4b = Axis(fig4[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: tension-spline mean ± 2σ  (tension = 25)")
+    title = "Output: tension-spline mean ± 2·std(residuals)  (tension = 25)")
 band!(ax4b, t_output, ten_μ .- 2 .* ten_std, ten_μ .+ 2 .* ten_std;
     color = (:purple, 0.2), label = "± 2σ")
 lines!(ax4b, t_output, ten_μ; color = :purple, linewidth = 2.5, label = "Tension-spline mean")
@@ -155,7 +156,7 @@ lines!(ax5a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax5a; position = :lt, framevisible = true, labelsize = 11)
 
 ax5b = Axis(fig5[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: sinusoid mean ± 2σ")
+    title = "Output: sinusoid mean ± 2·std(residuals)")
 band!(ax5b, t_output, sin_μ .- 2 .* sin_std, sin_μ .+ 2 .* sin_std;
     color = (:darkorange, 0.2), label = "± 2σ")
 lines!(ax5b, t_output, sin_μ; color = :darkorange, linewidth = 2.5, label = "Sinusoid mean")

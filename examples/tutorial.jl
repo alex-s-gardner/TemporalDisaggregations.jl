@@ -28,7 +28,7 @@ mkpath(fig_dir)
 # single signal so results are directly comparable.
 
 t_daily    = collect(Date(2020, 1, 1):Day(1):Date(2024, 1, 1))
-t_decyear  = decimal_year.(t_daily)
+t_decyear  = yeardecimal.(t_daily)
 
 noise_std       = 2.0    # observation noise std-dev
 trend_rate      = 3.0    # signal rise per year
@@ -69,7 +69,7 @@ println("Datasets ready: small n=$n_small, large n=$n_large")
 # Helper: extract decimal-year time axis from a result DimStack.
 # Use .val to get the raw Date array (avoids returning a DimVector which Makie
 # cannot handle for band!/lines!/scatter!).
-t_axis(r) = decimal_year.(dims(r, Ti).val)
+t_axis(r) = yeardecimal.(dims(r, Ti).val)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Section 2 — Figure 1: Small n, all three methods
@@ -96,8 +96,8 @@ gp_μ  = r_gp.signal.data;   gp_σ  = r_gp.std.data
 # Build interval line-segments for the "input" panel.
 # linesegments! expects a flat Vector of Point2f: [p1_start, p1_end, p2_start, …]
 make_segs(t1v, t2v, yv) =
-    vcat([Point2f[Point2f(decimal_year(t1v[i]), yv[i]),
-                  Point2f(decimal_year(t2v[i]), yv[i])]
+    vcat([Point2f[Point2f(yeardecimal(t1v[i]), yv[i]),
+                  Point2f(yeardecimal(t2v[i]), yv[i])]
           for i in eachindex(yv)]...)
 
 segs_s = make_segs(t1_small, t2_small, y_small)

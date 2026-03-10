@@ -1,17 +1,11 @@
-using AbstractGPs
-using KernelFunctions
-using FastGaussQuadrature
-using LinearAlgebra
-using Dates
-using Statistics
-
 function disaggregate(m::GP,
                       aggregate_values::AbstractVector,
                       interval_start::AbstractVector{<:Dates.TimeType},
                       interval_end::AbstractVector{<:Dates.TimeType};
                       loss_norm::Symbol = :L2,
                       output_period::Dates.Period = Month(1),
-                      output_start::Union{Date,Nothing} = nothing)
+                      output_start::Union{Dates.TimeType,Nothing} = nothing,
+                      output_end::Union{Dates.TimeType,Nothing} = nothing)
 
     σ²  = m.obs_noise
     n   = length(aggregate_values)
@@ -28,19 +22,20 @@ function disaggregate(m::GP,
         throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
 
     order = sortperm(interval_start)
-    t1    = decimal_year.(interval_start[order])
-    t2    = decimal_year.(interval_end[order])
-    y     = Float64.(aggregate_values[order])
+    t1    = yeardecimal.(interval_start[order])
+    t2    = yeardecimal.(interval_end[order])
+    y     = Array(aggregate_values[order])
 
     # ── Monthly inducing grid (always monthly for O(n_ind³) tractability) ──────
-    monthly_dates, Z = _monthly_decimal_year_grid(t1[1], t2[end])
+    monthly_dates, Z = _monthly_yeardecimal_grid(t1[1], t2[end])
     n_ind = length(Z)
 
     # ── Output grid (may differ from inducing grid) ────────────────────────────
     # Use inducing grid directly only when output is default monthly-on-1st.
-    use_inducing_as_output = output_period == Month(1) && isnothing(output_start)
+    use_inducing_as_output = output_period == Month(1) && isnothing(output_start) && isnothing(output_end)
+    t_out_end = isnothing(output_end) ? t2[end] : yeardecimal(output_end)
     out_dates, Z_out = use_inducing_as_output ?
-        (monthly_dates, Z) : _date_grid(t1[1], t2[end], output_period; output_start)
+        (monthly_dates, Z) : _date_grid(t1[1], t_out_end, output_period; output_start)
 
     # ── Gauss-Legendre quadrature ─────────────────────────────────────────────
     # GL weights sum to 2 on [−1, 1]; dividing by 2 gives a mean-approximation
@@ -75,7 +70,7 @@ function disaggregate(m::GP,
 
     # ── L1: IRLS refinement (skipped for :L2) ─────────────────────────────────
     # Replace W=I with per-obs weights w_irls[i] = 1/(|r_i|+ε), iterate to convergence.
-    # Residuals use C*v (= C K⁻¹ μ_Z = predicted interval averages), not C*μ_Z.
+    # Predicted interval averages are C*μ_Z (not C*v, which is the Woodbury intermediate).
     if loss_norm == :L1
         ε_irls = 1e-6 * (std(y) + 1e-10)
         w_irls = ones(n)
@@ -87,10 +82,9 @@ function disaggregate(m::GP,
             CtWy       = C' * W_eff * y
             v          = L_M \ CtWy
             μ_Z_new    = (CtWy .- S_W * v) ./ σ²
-            r          = y .- C * v
-            w_irls_new = _irls_weights(r, ε_irls)
-            _irls_converged(w_irls_new, w_irls) && (μ_Z = μ_Z_new; break)
-            w_irls = w_irls_new
+            r          = y .- C * μ_Z_new
+            w_irls     = _irls_weights(r, ε_irls)
+            _irls_converged(μ_Z_new, μ_Z) && (μ_Z = μ_Z_new; break)
             μ_Z = μ_Z_new
         end
     end

@@ -1,8 +1,7 @@
-using Dates
-
 """
     disaggregate(method, aggregate_values, interval_start, interval_end;
-                 loss_norm=:L2, output_period=Month(1), output_start=nothing)
+                 loss_norm=:L2, output_period=Month(1), output_start=nothing,
+                 output_end=nothing)
 
 Reconstruct an instantaneous time series from interval-averaged observations.
 
@@ -15,16 +14,22 @@ Reconstruct an instantaneous time series from interval-averaged observations.
 - `interval_start`, `interval_end`: Interval boundaries as `Date`/`DateTime`.
 - `loss_norm::Symbol = :L2`: `:L2` or `:L1` (robust to outliers via IRLS).
 - `output_period::Dates.Period = Month(1)`: Output grid spacing.
-- `output_start`: Grid anchor date (default `nothing`).
+- `output_start`: Grid anchor `Date` or `DateTime` (default `nothing`).
+- `output_end`: Last date of the output grid as `Date` or `DateTime`. Defaults
+  to the end of the data domain.
 
 # Returns
 `DimStack` with `:signal` and `:std` layers indexed by `Ti(dates)`.
+For `GP`, `:std` is the Bayesian posterior standard deviation. For `Spline` and `Sinusoid`,
+`:std` is a constant across the output grid equal to the residual standard deviation of
+predicted vs. observed interval averages (`std(y .- ŷ)`).
 
 # Examples
 ```julia
 result = disaggregate(Spline(smoothness=1e-3), y, t1, t2)
 result = disaggregate(GP(obs_noise=4.0), y, t1, t2; loss_norm=:L1)
 result = disaggregate(Sinusoid(), y, t1, t2; output_period=Day(1))
+result = disaggregate(Spline(), y, t1, t2; output_end=Date(2020, 6, 1))
 ```
 """
 function disaggregate end

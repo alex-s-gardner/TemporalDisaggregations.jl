@@ -26,7 +26,7 @@ julia --project=examples examples/tutorial.jl
 
 This is a Julia package that reconstructs instantaneous time series from interval-averaged observations (temporal disaggregation). The core problem: given measurements averaged over overlapping time intervals, recover the underlying instantaneous signal.
 
-**Exports:** `disaggregate`, `decimal_year`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`.
+**Exports:** `disaggregate`, `yeardecimal`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`.
 
 **Public API:** `disaggregate(method::DisaggregationMethod, aggregate_values, interval_start, interval_end; loss_norm=:L2, output_period=Month(1), output_start=nothing)` — dispatches on the algorithm struct type. Method-specific parameters live in the struct; shared kwargs (`loss_norm`, `output_period`, `output_start`) stay as function kwargs.
 
@@ -39,7 +39,7 @@ GP        <: DisaggregationMethod   # kernel, obs_noise, n_quad
 ```
 All use `@kwdef` with sensible defaults. `GP.kernel` is untyped (`Any`) because KernelFunctions.jl compositions produce deeply nested parametric types.
 
-**`decimal_year(d)`** in `src/utils.jl` — converts a `Date` or `DateTime` to a decimal year (leap-year-aware). E.g. `decimal_year(Date(2020, 7, 2)) ≈ 2020.5`.
+**`yeardecimal(d)`** in `src/utils.jl` — converts a `Date` or `DateTime` to a decimal year (leap-year-aware). E.g. `yeardecimal(Date(2020, 7, 2)) ≈ 2020.5`.
 
 **Time representation:** All interval boundaries are decimal years (e.g. `2020.5` = mid-2020).
 
@@ -69,16 +69,16 @@ DimStack(
 | Method | What `std` measures |
 |--------|---------------------|
 | **GP** | True Bayesian posterior uncertainty (depends on kernel and `obs_noise`) |
-| **Spline** | Regularisation confidence (controlled by `smoothness`) |
-| **Sinusoid** | Parameter uncertainty (valid only if signal matches the parametric model) |
+| **Spline** | Residual std of predicted vs. observed interval averages (constant across output grid) |
+| **Sinusoid** | Residual std of predicted vs. observed interval averages (constant across output grid) |
 
-When using `loss_norm = :L1`, `std` is approximate (computed from the final reweighted system).
+For Spline and Sinusoid, `std` is `std(y .- ŷ)` where `ŷ` is the fitted model re-integrated over each observation interval. When using `loss_norm = :L1`, this residual std is computed from the final IRLS solution.
 
 ## Helper functions (`src/utils.jl`)
 
-- `decimal_year(d)` — **exported**; `Date`/`DateTime` → decimal year, leap-year-aware.
+- `yeardecimal(d)` — **exported**; `Date`/`DateTime` → decimal year, leap-year-aware.
 - `_date_grid(t_min, t_max, step; output_start)` — general grid generator with leap-year handling.
-- `_monthly_decimal_year_grid(t_min, t_max)` — specialised monthly wrapper used by all three methods.
+- `_monthly_yeardecimal_grid(t_min, t_max)` — specialised monthly wrapper used by all three methods.
 - `_difference_matrix(m, r)` — builds the r-th order difference matrix for P-spline regularization.
 - `_irls_weights` / `_irls_converged` — shared IRLS helpers used by all methods.
 
