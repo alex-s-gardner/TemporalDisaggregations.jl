@@ -48,17 +48,6 @@ end
     end
 
     # ─────────────────────────────────────────────────────────────────────────
-    @testset "Helper: _monthly_yeardecimal_grid" begin
-        dates, times = TD._monthly_yeardecimal_grid(2020.0, 2021.0)
-        @test first(dates) == Date(2020, 1, 1)
-        @test last(dates)  == Date(2021, 1, 1)
-        @test length(dates) == 13
-        @test times[1] ≈ 2020.0
-        @test times[end] ≈ 2021.0
-        @test issorted(times)
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
     @testset "Helper: _date_grid" begin
         dates, times = TD._date_grid(2020.0, 2021.0, Day(1))
         @test first(dates) == Date(2020, 1, 1)
@@ -66,10 +55,25 @@ end
         @test issorted(dates)
         @test all(isfinite, times)
 
-        # Monthly step should match _monthly_yeardecimal_grid result
-        dates_m, times_m = TD._date_grid(2020.0, 2021.0, Month(1))
-        dates_r, times_r = TD._monthly_yeardecimal_grid(2020.0, 2021.0)
-        @test dates_m == dates_r
+        # Monthly step should produce 1st-of-month dates
+        dates_m, _ = TD._date_grid(2020.0, 2021.0, Month(1))
+        @test first(dates_m) == Date(2020, 1, 1)
+        @test last(dates_m)  == Date(2021, 1, 1)
+        @test length(dates_m) == 13
+    end
+
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "Helper: _half_period" begin
+        @test TD._half_period(Year(1))   == Month(6)
+        @test TD._half_period(Year(2))   == Month(12)
+        @test TD._half_period(Month(6))  == Month(3)
+        @test TD._half_period(Month(2))  == Month(1)
+        @test TD._half_period(Month(1))  == Week(2)
+        @test TD._half_period(Week(4))   == Day(14)
+        @test TD._half_period(Week(1))   == Day(4)
+        @test TD._half_period(Day(4))    == Day(2)
+        @test TD._half_period(Day(1))    == Day(1)   # floor
+        @test TD._half_period(Hour(1))   == Day(1)   # sub-daily floor
     end
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -310,7 +314,7 @@ end
             @test all(isfinite, result.std)
         end
 
-        @testset "output_period = Day(1) triggers kriging path" begin
+        @testset "output_period = Day(1) uses daily inducing grid" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             y = ones(12)
             r_monthly = disaggregate(GP(obs_noise=0.1), y, t1, t2)

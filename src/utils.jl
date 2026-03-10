@@ -2,22 +2,6 @@ using Dates
 using LinearAlgebra
 
 """
-    _monthly_yeardecimal_grid(t_min, t_max)
-
-Return `(dates, yeardecimals)` for a monthly `Date` grid covering `[t_min, t_max]`,
-where both arguments are decimal years (e.g. `2020.5` = mid-2020).
-"""
-function _monthly_yeardecimal_grid(t_min::Real, t_max::Real)
-    y0 = floor(Int, t_min)
-    m0 = clamp(floor(Int, (t_min - y0) * 12) + 1, 1, 12)
-    y1 = floor(Int, t_max)
-    m1 = clamp(floor(Int, (t_max - y1) * 12) + 1, 1, 12)
-    dates = collect(Date(y0, m0, 1):Month(1):Date(y1, m1, 1))
-    times = [year(d) + (month(d) - 1) / 12.0 for d in dates]
-    return dates, times
-end
-
-"""
     _date_grid(t_min, t_max, step; output_start=nothing)
 
 Return `(dates, yeardecimals)` for a `Date` grid covering `[t_min, t_max]` with the
@@ -47,6 +31,32 @@ function _date_grid(t_min::Real, t_max::Real, step::Dates.Period;
     dates = collect(d_start:step:d_end)
     times = yeardecimal.(dates)
     return dates, times
+end
+
+"""
+    _half_period(p::Dates.Period) -> Dates.Period
+
+Return a period approximately half the size of `p`, for use as the GP inducing
+grid spacing (2× the output resolution). Sub-daily periods are floored at `Day(1)`
+to keep the O(m³) Cholesky tractable.
+
+| Input          | Output       |
+|----------------|--------------|
+| Year(n)        | Month(6n)    |
+| Month(n), n≥2  | Month(n÷2)   |
+| Month(1)       | Week(2)      |
+| Week(n), n≥2   | Day(7n÷2)    |
+| Week(1)        | Day(4)       |
+| Day(n), n≥2    | Day(n÷2)     |
+| Day(1) or finer| Day(1)       |
+"""
+function _half_period(p::Dates.Period)::Dates.Period
+    v = Dates.value(p)
+    p isa Year   && return Month(6v)
+    p isa Month  && return v >= 2 ? Month(v ÷ 2) : Week(2)
+    p isa Week   && return v >= 2 ? Day(max(1, 7v ÷ 2)) : Day(4)
+    p isa Day    && return v >= 2 ? Day(v ÷ 2) : Day(1)
+    return Day(1)  # sub-daily floor
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
