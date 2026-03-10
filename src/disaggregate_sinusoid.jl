@@ -149,24 +149,8 @@ function disaggregate(m::Sinusoid,
               A_fit * sin(2π * t) + B_fit * cos(2π * t)
               for t in eval_times]
 
-    # WLS covariance propagation for uncertainty (L2 system; approximate for L1)
-    L_chol  = cholesky(Symmetric(DᵀD + Λ))
-    V_hat   = L_chol.L \ D'                                          # [n_params × n]
-    df_fit  = sum(abs2, V_hat)
-    rss     = sum(abs2, D * θ .- y)
-    σ̂²     = rss / max(1.0, n - df_fit)
-    D_out   = zeros(length(eval_times), n_params)
-    for (i, t) in enumerate(eval_times)
-        D_out[i, 1] = 1.0
-        D_out[i, 2] = t - t_ref
-        for (k, yr) in enumerate(years)
-            D_out[i, 2 + k] = Float64(floor(Int, t) == yr)
-        end
-        D_out[i, 2 + n_years + 1] = sin(2π * t)
-        D_out[i, 2 + n_years + 2] = cos(2π * t)
-    end
-    V_out   = L_chol.L \ D_out'                                      # [n_params × n_out]
-    std_vec = sqrt(σ̂²) .* sqrt.(dropdims(sum(abs2, V_out, dims=1), dims=1))
+    std_val = std(y .- D * θ)
+    std_vec = fill(std_val, length(eval_times))
 
     return DimStack(
         (signal = DimArray(values,  Ti(out_dates)),

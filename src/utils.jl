@@ -1,17 +1,6 @@
 using Dates
 using LinearAlgebra
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Time helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-yeardecimal(d::Dates.Date)::Float64 =
-    year(d) + (d - Date(year(d), 1, 1)).value / (isleapyear(year(d)) ? 366.0 : 365.0)
-
-yeardecimal(dt::Dates.DateTime)::Float64 =
-    year(dt) + (dt - DateTime(year(dt), 1, 1)).value /
-               (86_400_000.0 * (isleapyear(year(dt)) ? 366 : 365))
-
 """
     _monthly_yeardecimal_grid(t_min, t_max)
 
@@ -109,3 +98,74 @@ Return `true` when the relative change `‖x_new − x‖∞ / (‖x‖ + 1e-10)
 """
 _irls_converged(x_new, x, tol=1e-8) =
     maximum(abs.(x_new .- x)) / (norm(x) + 1e-10) < tol
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Post-processing helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    interval_average(result, t1, t2) → Vector{Float64}
+
+Compute the time-average of a disaggregated signal over each observation interval
+`[t1[i], t2[i]]` using trapezoidal integration on the high-resolution output grid.
+
+# Arguments
+- `result`: return value of `disaggregate` (has `.signal` field with a `:Ti` dimension)
+- `t1`, `t2`: vectors of interval start/end times (DateTime or any type accepted by
+  `DateFormats.yeardecimal`)
+
+# Returns
+`Vector{Float64}` of length `length(t1)`, each entry being the mean signal value over
+the corresponding interval.  Intervals that fall entirely outside the output grid are
+filled with the nearest boundary value.
+
+# Author
+Alex S. Gardner, JPL, Caltech.
+"""
+function interval_average(result, t1::AbstractVector, t2::AbstractVector)
+    signal = result.signal
+    t_out  = Float64.(yeardecimal.(dims(signal, :Ti).val))
+    s_out  = Float64.(signal.data)
+
+    t1_yr  = Float64.(yeardecimal.(t1))
+    t2_yr  = Float64.(yeardecimal.(t2))
+
+    # Linear interpolation at arbitrary decimal year
+    function _interp(t)
+        idx = searchsortedlast(t_out, t)
+        idx == 0              && return s_out[1]
+        idx == length(t_out)  && return s_out[end]
+        t0, t1_ = t_out[idx], t_out[idx + 1]
+        s0, s1_ = s_out[idx], s_out[idx + 1]
+        return s0 + (s1_ - s0) * (t - t0) / (t1_ - t0)
+    end
+
+    n   = length(t1)
+    avg = Vector{Float64}(undef, n)
+
+    for i in 1:n
+        a, b = t1_yr[i], t2_yr[i]
+        dt   = b - a
+
+        if dt <= 0
+            avg[i] = _interp(a)
+            continue
+        end
+
+        # Interior output time steps within the open interval (a, b)
+        inner = findall(a .< t_out .< b)
+
+        # Build integration nodes: interpolated boundaries + interior grid points
+        t_nodes = vcat(a,           t_out[inner], b)
+        s_nodes = vcat(_interp(a),  s_out[inner], _interp(b))
+
+        # Trapezoidal integral divided by interval length → mean value
+        integral = sum(
+            (t_nodes[j+1] - t_nodes[j]) * (s_nodes[j] + s_nodes[j+1]) / 2
+            for j in 1:(length(t_nodes) - 1)
+        )
+        avg[i] = integral / dt
+    end
+
+    return avg
+end

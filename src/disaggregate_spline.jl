@@ -110,20 +110,8 @@ function disaggregate(m::Spline,
 
     values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:n_basis) for t in eval_times]
 
-    # Type-II MLE (empirical Bayes) for σ²:
-    #   σ̂² = (‖y − C_norm â‖² + λ â′Pâ) / n
-    # The second term is the marginal-likelihood penalty contribution, which
-    # provides a finite noise floor when the system is underdetermined (m ≥ n).
-    # This avoids the near-zero σ̂² that the naive rss/(n−df_fit) gives when
-    # the spline can interpolate the data exactly.
-    rss     = sum(abs2, C_norm * a .- y)                             # residuals in signal units
-    σ̂²     = (rss + λ * dot(a, P * a)) / n
-    # Small jitter ensures PD when λ is near zero (CWC rank-deficient for n_basis > n)
-    A_unc   = Symmetric(CWC + λ * P)
-    L_chol  = cholesky(A_unc + sqrt(eps()) * norm(A_unc) * I(n_basis))
-    B_out   = Float64[bsplinebasis(dP_F, j, t) for t in eval_times, j in 1:n_basis]  # [n_out × n_basis]
-    V_out   = L_chol.L \ B_out'                                      # [n_basis × n_out]
-    std_vec = sqrt(σ̂²) .* sqrt.(dropdims(sum(abs2, V_out, dims=1), dims=1))
+    std_val = std(y .- C_norm * a)
+    std_vec = fill(std_val, length(eval_times))
 
     return DimStack(
         (signal = DimArray(values,  Ti(out_dates)),

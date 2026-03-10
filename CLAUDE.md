@@ -69,10 +69,10 @@ DimStack(
 | Method | What `std` measures |
 |--------|---------------------|
 | **GP** | True Bayesian posterior uncertainty (depends on kernel and `obs_noise`) |
-| **Spline** | Regularisation confidence (controlled by `smoothness`) |
-| **Sinusoid** | Parameter uncertainty (valid only if signal matches the parametric model) |
+| **Spline** | Residual std of predicted vs. observed interval averages (constant across output grid) |
+| **Sinusoid** | Residual std of predicted vs. observed interval averages (constant across output grid) |
 
-When using `loss_norm = :L1`, `std` is approximate (computed from the final reweighted system).
+For Spline and Sinusoid, `std` is `std(y .- ŷ)` where `ŷ` is the fitted model re-integrated over each observation interval. When using `loss_norm = :L1`, this residual std is computed from the final IRLS solution.
 
 ## Helper functions (`src/utils.jl`)
 
