@@ -27,35 +27,24 @@ end
 @testset "TemporalDisaggregations.jl" begin
 
     # ─────────────────────────────────────────────────────────────────────────
-    @testset "Helper: _decimal_year" begin
+    @testset "Helper: _yeardecimal" begin
         # Jan 1 of any year → exact integer
-        @test TD.decimal_year(Date(2020, 1, 1)) == 2020.0
-        @test TD.decimal_year(Date(2000, 1, 1)) == 2000.0
+        @test TD.yeardecimal(Date(2020, 1, 1)) == 2020.0
+        @test TD.yeardecimal(Date(2000, 1, 1)) == 2000.0
 
         # Mid-year for a non-leap year (2019): day 182/365 ≈ 0.4986
         # July 2 is day 183, so fraction = 182/365
         d_mid = Date(2019, 7, 2)   # day 183 → offset 182
         expected = 2019.0 + 182.0 / 365.0
-        @test TD.decimal_year(d_mid) ≈ expected atol=1e-12
+        @test TD.yeardecimal(d_mid) ≈ expected atol=1e-12
 
         # Leap year 2020: July 2 is day 184 → offset 183/366
         d_leap = Date(2020, 7, 2)
         expected_leap = 2020.0 + 183.0 / 366.0
-        @test TD.decimal_year(d_leap) ≈ expected_leap atol=1e-12
+        @test TD.yeardecimal(d_leap) ≈ expected_leap atol=1e-12
 
         # DateTime variant: Jan 1 midnight
-        @test TD.decimal_year(DateTime(2021, 1, 1, 0, 0, 0)) == 2021.0
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    @testset "Helper: _monthly_decimal_year_grid" begin
-        dates, times = TD._monthly_decimal_year_grid(2020.0, 2021.0)
-        @test first(dates) == Date(2020, 1, 1)
-        @test last(dates)  == Date(2021, 1, 1)
-        @test length(dates) == 13
-        @test times[1] ≈ 2020.0
-        @test times[end] ≈ 2021.0
-        @test issorted(times)
+        @test TD.yeardecimal(DateTime(2021, 1, 1, 0, 0, 0)) == 2021.0
     end
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -66,10 +55,25 @@ end
         @test issorted(dates)
         @test all(isfinite, times)
 
-        # Monthly step should match _monthly_decimal_year_grid result
-        dates_m, times_m = TD._date_grid(2020.0, 2021.0, Month(1))
-        dates_r, times_r = TD._monthly_decimal_year_grid(2020.0, 2021.0)
-        @test dates_m == dates_r
+        # Monthly step should produce 1st-of-month dates
+        dates_m, _ = TD._date_grid(2020.0, 2021.0, Month(1))
+        @test first(dates_m) == Date(2020, 1, 1)
+        @test last(dates_m)  == Date(2021, 1, 1)
+        @test length(dates_m) == 13
+    end
+
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "Helper: _half_period" begin
+        @test TD._half_period(Year(1))   == Month(6)
+        @test TD._half_period(Year(2))   == Month(12)
+        @test TD._half_period(Month(6))  == Month(3)
+        @test TD._half_period(Month(2))  == Month(1)
+        @test TD._half_period(Month(1))  == Week(2)
+        @test TD._half_period(Week(4))   == Day(14)
+        @test TD._half_period(Week(1))   == Day(4)
+        @test TD._half_period(Day(4))    == Day(2)
+        @test TD._half_period(Day(1))    == Day(1)   # floor
+        @test TD._half_period(Hour(1))   == Day(1)   # sub-daily floor
     end
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -232,8 +236,8 @@ end
 
             # Compute exact interval averages for 36 monthly intervals
             t1_dates, t2_dates = make_monthly_intervals(Date(2018, 1, 1), 36)
-            t1_dec = TD.decimal_year.(t1_dates)
-            t2_dec = TD.decimal_year.(t2_dates)
+            t1_dec = TD.yeardecimal.(t1_dates)
+            t2_dec = TD.yeardecimal.(t2_dates)
 
             # Exact average of A*sin(2πt)+B*cos(2πt) over [t1,t2]
             y = [A_true * TD._interval_sin_integral(t1_dec[i], t2_dec[i]) +
@@ -310,7 +314,7 @@ end
             @test all(isfinite, result.std)
         end
 
-        @testset "output_period = Day(1) triggers kriging path" begin
+        @testset "output_period = Day(1) uses daily inducing grid" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             y = ones(12)
             r_monthly = disaggregate(GP(obs_noise=0.1), y, t1, t2)
@@ -352,6 +356,55 @@ end
         @test r_spline isa DimStack && hasdim(r_spline.signal, Ti)
         @test haskey(metadata(r_sin), :mean)
         @test r_gp.std isa DimArray
+    end
+
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "weights kwarg" begin
+
+        @testset "Validation" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 6)
+            y = ones(6)
+            for method in [Spline(), Sinusoid(), GP()]
+                @test_throws DimensionMismatch disaggregate(method, y, t1, t2; weights = ones(5))
+                @test_throws ArgumentError    disaggregate(method, y, t1, t2; weights = [1,1,1, 0,1,1.0])
+                @test_throws ArgumentError    disaggregate(method, y, t1, t2; weights = [1,1,1,-1,1,1.0])
+            end
+        end
+
+        @testset "Uniform weights match no weights (all methods)" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            for method in [Spline(), Sinusoid(), GP(obs_noise=0.1)]
+                r_none = disaggregate(method, y, t1, t2)
+                r_ones = disaggregate(method, y, t1, t2; weights = ones(24))
+                @test r_none.signal.data ≈ r_ones.signal.data  atol=1e-8
+                @test r_none.std.data    ≈ r_ones.std.data     atol=1e-8
+            end
+        end
+
+        @testset "Near-zero weight suppresses blunder" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y_clean   = [sin(2π * i / 12) for i in 1:24]
+            y_blunder = copy(y_clean)
+            y_blunder[12] += 100.0
+            r_truth      = disaggregate(Spline(), y_clean,   t1, t2)
+            r_unweighted = disaggregate(Spline(), y_blunder, t1, t2)
+            w = ones(24); w[12] = 1e-6
+            r_weighted   = disaggregate(Spline(), y_blunder, t1, t2; weights = w)
+            err_unw = norm(r_unweighted.signal.data - r_truth.signal.data)
+            err_wei = norm(r_weighted.signal.data   - r_truth.signal.data)
+            @test err_wei < err_unw
+        end
+
+        @testset "weights combined with L1 loss" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            w = rand(24) .+ 0.1        # random positive weights
+            r = disaggregate(Spline(), y, t1, t2; loss_norm = :L1, weights = w)
+            @test all(isfinite, r.signal)
+            @test all(r.std.data .>= 0)
+        end
+
     end
 
 end

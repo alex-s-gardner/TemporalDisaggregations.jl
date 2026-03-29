@@ -1,7 +1,3 @@
-using LinearAlgebra
-using Dates
-using Statistics
-
 """
     _interval_sin_integral(t1, t2)
 
@@ -40,7 +36,9 @@ function disaggregate(m::Sinusoid,
                       interval_end::AbstractVector{<:Dates.TimeType};
                       loss_norm::Symbol            = :L2,
                       output_period::Dates.Period  = Month(1),
-                      output_start::Union{Date,Nothing} = nothing)
+                      output_start::Union{Dates.TimeType,Nothing} = nothing,
+                      output_end::Union{Dates.TimeType,Nothing} = nothing,
+                      weights::Union{AbstractVector,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -51,12 +49,19 @@ function disaggregate(m::Sinusoid,
             "Every interval must satisfy interval_end > interval_start."))
     loss_norm ∈ (:L1, :L2) ||
         throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
+    if !isnothing(weights)
+        length(weights) == n ||
+            throw(DimensionMismatch("weights must have the same length as aggregate_values."))
+        all(>(0), weights) ||
+            throw(ArgumentError("All weights must be positive."))
+    end
 
     # Sort chronologically
     order = sortperm(interval_start)
-    t1    = decimal_year.(interval_start[order])
-    t2    = decimal_year.(interval_end[order])
+    t1    = yeardecimal.(interval_start[order])
+    t2    = yeardecimal.(interval_end[order])
     y     = Float64.(aggregate_values[order])
+    w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
 
     # ── Parameter layout ──────────────────────────────────────────────────────
     # θ = [μ,  β,  γ_yr1, …, γ_yrK,  A,  B]
@@ -89,14 +94,15 @@ function disaggregate(m::Sinusoid,
 
     # ── Weighted least-squares solve ──────────────────────────────────────────
     ε_irls = 1e-6 * (std(y) + 1e-10)
-    DᵀD = D' * D
-    θ   = (DᵀD + Λ) \ (D' * y)                  # L2 init
+    W_obs  = Diagonal(w_obs)
+    DᵀW    = D' * W_obs
+    θ      = (DᵀW * D + Λ) \ (DᵀW * y)          # L2 init
     if loss_norm == :L1
         w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
             r      = y .- D * θ
             @. w_irls = 1.0 / (abs(r) + ε_irls)
-            W_eff  = Diagonal(w_irls)
+            W_eff  = Diagonal(w_irls .* w_obs)
             DᵀW_e  = D' * W_eff
             θ_new  = (DᵀW_e * D + Λ) \ (DᵀW_e * y)
             _irls_converged(θ_new, θ) && (θ = θ_new; break)
@@ -116,7 +122,8 @@ function disaggregate(m::Sinusoid,
     seasonal_phase     = mod(atan(B_fit, A_fit) / (2π), 1.0)
 
     # ── Evaluate on output grid ───────────────────────────────────────────────
-    out_dates, eval_times = _date_grid(t1[1], t2[end], output_period; output_start)
+    t_out_end = isnothing(output_end) ? t2[end] : yeardecimal(output_end)
+    out_dates, eval_times = _date_grid(t1[1], t_out_end, output_period; output_start)
 
     # Interpolate interannual anomalies with a natural cubic spline through year
     # centres (year + 0.5, γ_year), then add trend, offset, and seasonality.
@@ -151,24 +158,9 @@ function disaggregate(m::Sinusoid,
               A_fit * sin(2π * t) + B_fit * cos(2π * t)
               for t in eval_times]
 
-    # WLS covariance propagation for uncertainty (L2 system; approximate for L1)
-    L_chol  = cholesky(Symmetric(DᵀD + Λ))
-    V_hat   = L_chol.L \ D'                                          # [n_params × n]
-    df_fit  = sum(abs2, V_hat)
-    rss     = sum(abs2, D * θ .- y)
-    σ̂²     = rss / max(1.0, n - df_fit)
-    D_out   = zeros(length(eval_times), n_params)
-    for (i, t) in enumerate(eval_times)
-        D_out[i, 1] = 1.0
-        D_out[i, 2] = t - t_ref
-        for (k, yr) in enumerate(years)
-            D_out[i, 2 + k] = Float64(floor(Int, t) == yr)
-        end
-        D_out[i, 2 + n_years + 1] = sin(2π * t)
-        D_out[i, 2 + n_years + 2] = cos(2π * t)
-    end
-    V_out   = L_chol.L \ D_out'                                      # [n_params × n_out]
-    std_vec = sqrt(σ̂²) .* sqrt.(dropdims(sum(abs2, V_out, dims=1), dims=1))
+    r       = y .- D * θ
+    std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
+    std_vec = fill(std_val, length(eval_times))
 
     return DimStack(
         (signal = DimArray(values,  Ti(out_dates)),

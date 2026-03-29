@@ -1,15 +1,12 @@
-using BasicBSpline
-using Dates
-using Statistics
-using LinearAlgebra
-
 function disaggregate(m::Spline,
                       aggregate_values::AbstractVector,
                       interval_start::AbstractVector{<:Dates.TimeType},
                       interval_end::AbstractVector{<:Dates.TimeType};
                       loss_norm::Symbol = :L2,
                       output_period::Dates.Period = Month(1),
-                      output_start::Union{Date,Nothing} = nothing)
+                      output_start::Union{Dates.TimeType,Nothing} = nothing,
+                      output_end::Union{Dates.TimeType,Nothing} = nothing,
+                      weights::Union{AbstractVector,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -24,12 +21,19 @@ function disaggregate(m::Spline,
         throw(ArgumentError("tension must be ≥ 0."))
     loss_norm ∈ (:L1, :L2) ||
         throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
+    if !isnothing(weights)
+        length(weights) == n ||
+            throw(DimensionMismatch("weights must have the same length as aggregate_values."))
+        all(>(0), weights) ||
+            throw(ArgumentError("All weights must be positive."))
+    end
 
     # Sort intervals chronologically
     order = sortperm(interval_start)
-    t1    = decimal_year.(interval_start[order])
-    t2    = decimal_year.(interval_end[order])
-    y     = Float64.(aggregate_values[order])
+    t1    = yeardecimal.(interval_start[order])
+    t2    = yeardecimal.(interval_end[order])
+    y     = aggregate_values[order]
+    w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
 
     # Quartic (p=4) B-spline space for F(t); x(t) = F′(t) is cubic.
     # Knot placement is the primary control over smoothness:
@@ -66,7 +70,7 @@ function disaggregate(m::Spline,
     # Normalise each row by the interval length so we fit interval averages (y)
     # rather than interval totals (areas).  This gives equal weight to every
     # observation regardless of length and keeps RSS in signal² units.
-    Δt     = t2 .- t1
+    Δt     = Array(t2 .- t1)
     C_norm = C ./ Δt
 
     # P-spline penalty of order `penalty_order`: ‖Dᵣ a‖²
@@ -88,15 +92,16 @@ function disaggregate(m::Spline,
     # Weighted least-squares with P-spline (+ optional tension) regularisation.
     # λ scaled by ‖C'C‖/n so `smoothness` is dimensionless.
     ε_irls = 1e-6 * (std(y) + 1e-10)
-    CWC = C_norm' * C_norm
-    λ   = m.smoothness * (norm(CWC) / n + 1e-10)
-    a   = (CWC + λ * P) \ (C_norm' * y)          # L2 init (also final if loss_norm==:L2)
+    W_obs  = Diagonal(w_obs)
+    CWC    = C_norm' * W_obs * C_norm
+    λ      = m.smoothness * (norm(CWC) / n + 1e-10)
+    a      = (CWC + λ * P) \ (C_norm' * W_obs * y)   # L2 init (also final if loss_norm==:L2)
     if loss_norm == :L1
         w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
             r     = y .- C_norm * a
             @. w_irls = 1.0 / (abs(r) + ε_irls)
-            W_eff  = Diagonal(w_irls)
+            W_eff  = Diagonal(w_irls .* w_obs)
             CWC_e  = C_norm' * W_eff * C_norm
             a_new  = (CWC_e + λ * P) \ (C_norm' * W_eff * y)
             _irls_converged(a_new, a) && (a = a_new; break)
@@ -108,25 +113,15 @@ function disaggregate(m::Spline,
     dP_F = BasicBSpline.derivative(P_F)
 
     # Evaluate on the output grid clamped to the data domain
-    out_dates, eval_times = _date_grid(t_nodes[1], t_nodes[end], output_period; output_start)
+    t_out_end = isnothing(output_end) ? t_nodes[end] : yeardecimal(output_end)
+    out_dates, eval_times = _date_grid(t_nodes[1], t_out_end, output_period; output_start)
     eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
 
     values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:n_basis) for t in eval_times]
 
-    # Type-II MLE (empirical Bayes) for σ²:
-    #   σ̂² = (‖y − C_norm â‖² + λ â′Pâ) / n
-    # The second term is the marginal-likelihood penalty contribution, which
-    # provides a finite noise floor when the system is underdetermined (m ≥ n).
-    # This avoids the near-zero σ̂² that the naive rss/(n−df_fit) gives when
-    # the spline can interpolate the data exactly.
-    rss     = sum(abs2, C_norm * a .- y)                             # residuals in signal units
-    σ̂²     = (rss + λ * dot(a, P * a)) / n
-    # Small jitter ensures PD when λ is near zero (CWC rank-deficient for n_basis > n)
-    A_unc   = Symmetric(CWC + λ * P)
-    L_chol  = cholesky(A_unc + sqrt(eps()) * norm(A_unc) * I(n_basis))
-    B_out   = Float64[bsplinebasis(dP_F, j, t) for t in eval_times, j in 1:n_basis]  # [n_out × n_basis]
-    V_out   = L_chol.L \ B_out'                                      # [n_basis × n_out]
-    std_vec = sqrt(σ̂²) .* sqrt.(dropdims(sum(abs2, V_out, dims=1), dims=1))
+    r       = y .- C_norm * a
+    std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
+    std_vec = fill(std_val, length(eval_times))
 
     return DimStack(
         (signal = DimArray(values,  Ti(out_dates)),

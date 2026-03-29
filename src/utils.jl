@@ -1,37 +1,10 @@
 using Dates
 using LinearAlgebra
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Time helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-decimal_year(d::Dates.Date)::Float64 =
-    year(d) + (d - Date(year(d), 1, 1)).value / (isleapyear(year(d)) ? 366.0 : 365.0)
-
-decimal_year(dt::Dates.DateTime)::Float64 =
-    year(dt) + (dt - DateTime(year(dt), 1, 1)).value /
-               (86_400_000.0 * (isleapyear(year(dt)) ? 366 : 365))
-
-"""
-    _monthly_decimal_year_grid(t_min, t_max)
-
-Return `(dates, decimal_years)` for a monthly `Date` grid covering `[t_min, t_max]`,
-where both arguments are decimal years (e.g. `2020.5` = mid-2020).
-"""
-function _monthly_decimal_year_grid(t_min::Real, t_max::Real)
-    y0 = floor(Int, t_min)
-    m0 = clamp(floor(Int, (t_min - y0) * 12) + 1, 1, 12)
-    y1 = floor(Int, t_max)
-    m1 = clamp(floor(Int, (t_max - y1) * 12) + 1, 1, 12)
-    dates = collect(Date(y0, m0, 1):Month(1):Date(y1, m1, 1))
-    times = [year(d) + (month(d) - 1) / 12.0 for d in dates]
-    return dates, times
-end
-
 """
     _date_grid(t_min, t_max, step; output_start=nothing)
 
-Return `(dates, decimal_years)` for a `Date` grid covering `[t_min, t_max]` with the
+Return `(dates, yeardecimals)` for a `Date` grid covering `[t_min, t_max]` with the
 given `step` (any `Dates.Period`), where both bounds are decimal years.
 
 If `output_start` is provided, it anchors the grid:
@@ -39,23 +12,51 @@ If `output_start` is provided, it anchors the grid:
 - For other steps: `output_start` is used as the literal start date.
 """
 function _date_grid(t_min::Real, t_max::Real, step::Dates.Period;
-                    output_start::Union{Date,Nothing} = nothing)
+                    output_start::Union{Dates.TimeType,Nothing} = nothing)
+    sub_day = step isa Union{Hour, Minute, Second, Millisecond}
+
     yr0 = floor(Int, t_min); ndays0 = isleapyear(yr0) ? 366 : 365
+    d0_date = Date(yr0, 1, 1) + Day(floor(Int, (t_min - yr0) * ndays0))
     if isnothing(output_start)
-        d_start = Date(yr0, 1, 1) + Day(floor(Int, (t_min - yr0) * ndays0))
+        d_start = sub_day ? DateTime(d0_date) : d0_date
     elseif step isa Month
         m0      = clamp(floor(Int, (t_min - yr0) * 12) + 1, 1, 12)
         d_start = Date(yr0, m0, min(day(output_start), daysinmonth(yr0, m0)))
     else
-        d_start = output_start
+        d_start = sub_day && output_start isa Date ? DateTime(output_start) : output_start
     end
     yr1 = floor(Int, t_max); ndays1 = isleapyear(yr1) ? 366 : 365
-    d_end   = Date(yr1, 1, 1) + Day(floor(Int, (t_max - yr1) * ndays1))
+    d1_date = Date(yr1, 1, 1) + Day(floor(Int, (t_max - yr1) * ndays1))
+    d_end   = sub_day ? DateTime(d1_date) : d1_date
     dates = collect(d_start:step:d_end)
-    times = Float64[let yr = year(d)
-        yr + (d - Date(yr, 1, 1)).value / (isleapyear(yr) ? 366.0 : 365.0)
-    end for d in dates]
+    times = yeardecimal.(dates)
     return dates, times
+end
+
+"""
+    _half_period(p::Dates.Period) -> Dates.Period
+
+Return a period approximately half the size of `p`, for use as the GP inducing
+grid spacing (2× the output resolution). Sub-daily periods are floored at `Day(1)`
+to keep the O(m³) Cholesky tractable.
+
+| Input          | Output       |
+|----------------|--------------|
+| Year(n)        | Month(6n)    |
+| Month(n), n≥2  | Month(n÷2)   |
+| Month(1)       | Week(2)      |
+| Week(n), n≥2   | Day(7n÷2)    |
+| Week(1)        | Day(4)       |
+| Day(n), n≥2    | Day(n÷2)     |
+| Day(1) or finer| Day(1)       |
+"""
+function _half_period(p::Dates.Period)::Dates.Period
+    v = Dates.value(p)
+    p isa Year   && return Month(6v)
+    p isa Month  && return v >= 2 ? Month(v ÷ 2) : Week(2)
+    p isa Week   && return v >= 2 ? Day(max(1, 7v ÷ 2)) : Day(4)
+    p isa Day    && return v >= 2 ? Day(v ÷ 2) : Day(1)
+    return Day(1)  # sub-daily floor
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -107,3 +108,74 @@ Return `true` when the relative change `‖x_new − x‖∞ / (‖x‖ + 1e-10)
 """
 _irls_converged(x_new, x, tol=1e-8) =
     maximum(abs.(x_new .- x)) / (norm(x) + 1e-10) < tol
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Post-processing helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    interval_average(result, t1, t2) → Vector{Float64}
+
+Compute the time-average of a disaggregated signal over each observation interval
+`[t1[i], t2[i]]` using trapezoidal integration on the high-resolution output grid.
+
+# Arguments
+- `result`: return value of `disaggregate` (has `.signal` field with a `:Ti` dimension)
+- `t1`, `t2`: vectors of interval start/end times (DateTime or any type accepted by
+  `DateFormats.yeardecimal`)
+
+# Returns
+`Vector{Float64}` of length `length(t1)`, each entry being the mean signal value over
+the corresponding interval.  Intervals that fall entirely outside the output grid are
+filled with the nearest boundary value.
+
+# Author
+Alex S. Gardner, JPL, Caltech.
+"""
+function interval_average(result, t1::AbstractVector, t2::AbstractVector)
+    signal = result.signal
+    t_out  = Float64.(yeardecimal.(dims(signal, :Ti).val))
+    s_out  = Float64.(signal.data)
+
+    t1_yr  = Float64.(yeardecimal.(t1))
+    t2_yr  = Float64.(yeardecimal.(t2))
+
+    # Linear interpolation at arbitrary decimal year
+    function _interp(t)
+        idx = searchsortedlast(t_out, t)
+        idx == 0              && return s_out[1]
+        idx == length(t_out)  && return s_out[end]
+        t0, t1_ = t_out[idx], t_out[idx + 1]
+        s0, s1_ = s_out[idx], s_out[idx + 1]
+        return s0 + (s1_ - s0) * (t - t0) / (t1_ - t0)
+    end
+
+    n   = length(t1)
+    avg = Vector{Float64}(undef, n)
+
+    for i in 1:n
+        a, b = t1_yr[i], t2_yr[i]
+        dt   = b - a
+
+        if dt <= 0
+            avg[i] = _interp(a)
+            continue
+        end
+
+        # Interior output time steps within the open interval (a, b)
+        inner = findall(a .< t_out .< b)
+
+        # Build integration nodes: interpolated boundaries + interior grid points
+        t_nodes = vcat(a,           t_out[inner], b)
+        s_nodes = vcat(_interp(a),  s_out[inner], _interp(b))
+
+        # Trapezoidal integral divided by interval length → mean value
+        integral = sum(
+            (t_nodes[j+1] - t_nodes[j]) * (s_nodes[j] + s_nodes[j+1]) / 2
+            for j in 1:(length(t_nodes) - 1)
+        )
+        avg[i] = integral / dt
+    end
+
+    return avg
+end

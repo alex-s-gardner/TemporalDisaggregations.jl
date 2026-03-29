@@ -26,9 +26,9 @@ julia --project=examples examples/tutorial.jl
 
 This is a Julia package that reconstructs instantaneous time series from interval-averaged observations (temporal disaggregation). The core problem: given measurements averaged over overlapping time intervals, recover the underlying instantaneous signal.
 
-**Exports:** `disaggregate`, `decimal_year`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`.
+**Exports:** `disaggregate`, `yeardecimal`, `interval_average`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`.
 
-**Public API:** `disaggregate(method::DisaggregationMethod, aggregate_values, interval_start, interval_end; loss_norm=:L2, output_period=Month(1), output_start=nothing)` — dispatches on the algorithm struct type. Method-specific parameters live in the struct; shared kwargs (`loss_norm`, `output_period`, `output_start`) stay as function kwargs.
+**Public API:** `disaggregate(method::DisaggregationMethod, aggregate_values, interval_start, interval_end; loss_norm=:L2, output_period=Month(1), output_start=nothing, output_end=nothing, weights=nothing)` — dispatches on the algorithm struct type. Method-specific parameters live in the struct; shared kwargs (`loss_norm`, `output_period`, `output_start`, `output_end`, `weights`) stay as function kwargs. `weights` is a length-n vector of positive per-observation weights (e.g. `1 ./ σ²_obs`); for `:L1` loss they are multiplied element-wise with the IRLS weights.
 
 **Algorithm structs** (`src/methods.jl`):
 ```julia
@@ -39,7 +39,7 @@ GP        <: DisaggregationMethod   # kernel, obs_noise, n_quad
 ```
 All use `@kwdef` with sensible defaults. `GP.kernel` is untyped (`Any`) because KernelFunctions.jl compositions produce deeply nested parametric types.
 
-**`decimal_year(d)`** in `src/utils.jl` — converts a `Date` or `DateTime` to a decimal year (leap-year-aware). E.g. `decimal_year(Date(2020, 7, 2)) ≈ 2020.5`.
+**`yeardecimal(d)`** in `src/utils.jl` — converts a `Date` or `DateTime` to a decimal year (leap-year-aware). E.g. `yeardecimal(Date(2020, 7, 2)) ≈ 2020.5`.
 
 **Time representation:** All interval boundaries are decimal years (e.g. `2020.5` = mid-2020).
 
@@ -52,8 +52,10 @@ DimStack(
 )
 ```
 - `output_period` kwarg (default `Month(1)`) controls grid spacing — any `Dates.Period` is valid (`Day`, `Week`, `Month`, `Year`).
-- `output_start` anchors the grid start.
-- When `output_period ≠ Month(1)` for the GP method, inducing points stay monthly and a kriging step predicts at the arbitrary grid (extra O(m²) solve).
+- `output_start` anchors the grid start; `output_end` caps the grid end.
+- For the GP method, the inducing grid is always at `_half_period(output_period)` resolution, and the output is always kriged from the inducing grid (extra O(m²) solve).
+
+**`src/disaggregate.jl`** — declares the `disaggregate` generic function with its full docstring. Method implementations live in the per-method files below.
 
 **Three method implementations** (each dispatches on its struct):
 
@@ -61,7 +63,7 @@ DimStack(
 
 - `src/disaggregate_sinusoid.jl` — `disaggregate(m::Sinusoid, ...)`. Parametric model: mean + trend + per-year anomalies + annual sinusoid. Design matrix is constructed analytically (exact interval integrals, no quadrature); fastest method.
 
-- `src/disaggregate_gp.jl` — `disaggregate(m::GP, ...)`. Sparse inducing-point GP (DTC approximation) on a monthly grid. Uses Gauss-Legendre quadrature (`FastGaussQuadrature`) to build the integral cross-kernel matrix via `Threads.@threads`. Matrix inversion lemma avoids forming the n×n observation covariance.
+- `src/disaggregate_gp.jl` — `disaggregate(m::GP, ...)`. Sparse inducing-point GP (DTC approximation); inducing grid is 2× finer than `output_period` (floored at `Day(1)`). Uses Gauss-Legendre quadrature (`FastGaussQuadrature`) to build the integral cross-kernel matrix via `Threads.@threads`. Matrix inversion lemma avoids forming the n×n observation covariance. Always krigs from the inducing grid to the output grid.
 
 **Shared L1/L2 loss:** All three methods implement optional L1 loss via IRLS (max 50 iterations, tolerance 1e-8 infinity-norm on relative weight change). `loss_norm` is a shared function kwarg.
 
@@ -69,18 +71,20 @@ DimStack(
 | Method | What `std` measures |
 |--------|---------------------|
 | **GP** | True Bayesian posterior uncertainty (depends on kernel and `obs_noise`) |
-| **Spline** | Regularisation confidence (controlled by `smoothness`) |
-| **Sinusoid** | Parameter uncertainty (valid only if signal matches the parametric model) |
+| **Spline** | Residual std of predicted vs. observed interval averages (constant across output grid) |
+| **Sinusoid** | Residual std of predicted vs. observed interval averages (constant across output grid) |
 
-When using `loss_norm = :L1`, `std` is approximate (computed from the final reweighted system).
+For Spline and Sinusoid, `std` is `std(y .- ŷ)` where `ŷ` is the fitted model re-integrated over each observation interval. When using `loss_norm = :L1`, this residual std is computed from the final IRLS solution.
 
 ## Helper functions (`src/utils.jl`)
 
-- `decimal_year(d)` — **exported**; `Date`/`DateTime` → decimal year, leap-year-aware.
+- `yeardecimal(d)` — **exported**; `Date`/`DateTime` → decimal year, leap-year-aware.
 - `_date_grid(t_min, t_max, step; output_start)` — general grid generator with leap-year handling.
-- `_monthly_decimal_year_grid(t_min, t_max)` — specialised monthly wrapper used by all three methods.
+- `_half_period(p)` — returns a period ≈ half the size of `p`, floored at `Day(1)`; used by the GP method to set inducing grid spacing at 2× the output resolution.
 - `_difference_matrix(m, r)` — builds the r-th order difference matrix for P-spline regularization.
 - `_irls_weights` / `_irls_converged` — shared IRLS helpers used by all methods.
+
+**Post-processing:** `interval_average(result, t1, t2)` — **exported**; trapezoidal re-integration of a `disaggregate` result over arbitrary intervals. Useful for computing residuals or forward-checking fit quality.
 
 **Other helpers** (in their respective method files):
 - `_interval_sin_integral`, `_interval_cos_integral`, `_year_overlap_fraction` in `disaggregate_sinusoid.jl` — closed-form interval averages for the sinusoid design matrix.
@@ -96,4 +100,4 @@ Tests in `test/runtests.jl` use `const TD = TemporalDisaggregations` to access i
 
 ## Examples
 
-`examples/tutorial.jl` is the main end-to-end demo. It generates 7 figures covering all three methods, parameter sweeps, kernel designs, L1 vs L2 robustness, and output grid options.
+`examples/tutorial.jl` is the main end-to-end demo. It generates 8 figures covering all three methods, parameter sweeps, kernel designs, L1 vs L2 robustness, output grid options, and per-observation weights (heteroscedastic noise).

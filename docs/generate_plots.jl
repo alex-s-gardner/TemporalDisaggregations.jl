@@ -10,7 +10,7 @@ Random.seed!(7)
 
 # ── Synthetic signal ──────────────────────────────────────────────────────────
 t_daily = DateTime(2015, 1, 1):Day(1):DateTime(2020, 1, 1)
-t_decyear = decimal_year.(t_daily)
+t_decyear = yeardecimal.(t_daily)
 
 seasonal_amp    = 15.0
 interannual_amp = 6.0
@@ -36,6 +36,7 @@ r_sin    = disaggregate(Sinusoid(smoothness_interannual = 1e-2), y, t1, t2)
 k = 15.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
      5.0^2 * with_lengthscale(Matern52Kernel(), 2.0) +
      3.0^2 * with_lengthscale(Matern32Kernel(), 1/12)
+     
 r_gp = disaggregate(GP(kernel = k, obs_noise = noise_std^2, n_quad = 5), y, t1, t2)
 
 # Extract plain Float64 vectors (avoids Makie/DimensionalData extension conflicts)
@@ -47,7 +48,7 @@ gp_μ = r_gp.signal.data
 gp_σ  = r_gp.std.data
 
 # Monthly time axis from the shared output grid
-t_output = decimal_year.(dims(r_spline, :Ti).val)
+t_output = yeardecimal.(dims(r_spline, :Ti).val)
 
 # ── Figure 1: overview of all three methods ───────────────────────────────────
 fig1 = Figure(size = (900, 480), fontsize = 13);
@@ -56,8 +57,8 @@ ax1 = Axis(fig1[1, 1];
     title  = "Temporal disaggregation: recover instantaneous signal from interval averages",
 )
 
-pt1 = Point2f.(decimal_year.(t1), y);
-pt2 = Point2f.(decimal_year.(t2), y);
+pt1 = Point2f.(yeardecimal.(t1), y);
+pt2 = Point2f.(yeardecimal.(t2), y);
 linesegments!(ax1, vcat(collect(zip(pt1, pt2))...);
     color = (:black, 0.35), linewidth = 2, label = "Interval averages (input)")
 lines!(ax1, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True instantaneous signal")
@@ -113,7 +114,7 @@ lines!(ax3a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax3a; position = :lt, framevisible = true, labelsize = 11)
 
 ax3b = Axis(fig3[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: B-spline mean ± 2σ")
+    title = "Output: B-spline mean ± 2·std(residuals)")
 band!(ax3b, t_output, sp_μ .- 2 .* sp_std, sp_μ .+ 2 .* sp_std;
     color = (:steelblue, 0.2), label = "± 2σ")
 lines!(ax3b, t_output, sp_μ; color = :steelblue, linewidth = 2.5, label = "B-spline mean")
@@ -134,7 +135,7 @@ lines!(ax4a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax4a; position = :lt, framevisible = true, labelsize = 11)
 
 ax4b = Axis(fig4[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: tension-spline mean ± 2σ  (tension = 25)")
+    title = "Output: tension-spline mean ± 2·std(residuals)  (tension = 25)")
 band!(ax4b, t_output, ten_μ .- 2 .* ten_std, ten_μ .+ 2 .* ten_std;
     color = (:purple, 0.2), label = "± 2σ")
 lines!(ax4b, t_output, ten_μ; color = :purple, linewidth = 2.5, label = "Tension-spline mean")
@@ -155,7 +156,7 @@ lines!(ax5a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax5a; position = :lt, framevisible = true, labelsize = 11)
 
 ax5b = Axis(fig5[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: sinusoid mean ± 2σ")
+    title = "Output: sinusoid mean ± 2·std(residuals)")
 band!(ax5b, t_output, sin_μ .- 2 .* sin_std, sin_μ .+ 2 .* sin_std;
     color = (:darkorange, 0.2), label = "± 2σ")
 lines!(ax5b, t_output, sin_μ; color = :darkorange, linewidth = 2.5, label = "Sinusoid mean")
@@ -181,3 +182,52 @@ ax7 = Axis(fig7[1, 1]; xlabel = "Date", ylabel = "Signal")
 lines!(ax7, r_spline.signal)
 save("docs/images/quickstart_lines_signal.png", fig7, px_per_unit = 2)
 println("Saved quickstart_lines_signal.png")
+
+# ── Figure 8: per-observation weights ────────────────────────────────────────
+# Every 3rd interval gets large extra noise (σ=8); weights = 1/σ² suppress them.
+# Left panel: unweighted fit pulled toward noisy observations.
+# Right panel: weighted fit recovers the true signal.
+noisy_mask  = [mod(i, 3) == 0 for i in 1:n]
+σ_extra     = ifelse.(noisy_mask, 8.0, 0.0)
+y_hetero    = y .+ σ_extra .* randn(n)
+w_hetero    = ifelse.(noisy_mask, 1.0 / 8.0^2, 1.0)
+
+r_unw_w = disaggregate(Spline(smoothness = 1e-3), y_hetero, t1, t2)
+r_wei_w = disaggregate(Spline(smoothness = 1e-3), y_hetero, t1, t2; weights = w_hetero)
+
+unw_μ_w = r_unw_w.signal.data;  unw_std_w = r_unw_w.std.data
+wei_μ_w = r_wei_w.signal.data;  wei_std_w = r_wei_w.std.data
+
+pt1_noisy = Point2f.(yeardecimal.(t1[noisy_mask]),   y_hetero[noisy_mask])
+pt2_noisy = Point2f.(yeardecimal.(t2[noisy_mask]),   y_hetero[noisy_mask])
+pt1_clean = Point2f.(yeardecimal.(t1[.!noisy_mask]), y_hetero[.!noisy_mask])
+pt2_clean = Point2f.(yeardecimal.(t2[.!noisy_mask]), y_hetero[.!noisy_mask])
+
+fig8 = Figure(size = (900, 420), fontsize = 13)
+
+ax8a = Axis(fig8[1, 1]; xlabel = "Year", ylabel = "Signal",
+    title = "Unweighted — high-noise intervals (red) distort fit")
+linesegments!(ax8a, vcat(collect(zip(pt1_clean, pt2_clean))...);
+    color = (:black, 0.35), linewidth = 2,   label = "Observations (σ≈1.5)")
+linesegments!(ax8a, vcat(collect(zip(pt1_noisy, pt2_noisy))...);
+    color = (:crimson, 0.9), linewidth = 3,  label = "High-noise obs (σ=8)")
+band!(ax8a, t_output, unw_μ_w .- 2 .* unw_std_w, unw_μ_w .+ 2 .* unw_std_w;
+    color = (:steelblue, 0.2))
+lines!(ax8a, t_output, unw_μ_w; color = :steelblue, linewidth = 2.5, label = "Unweighted spline")
+lines!(ax8a, t_decyear, signal;  color = (:black, 0.2), linewidth = 1, label = "True signal")
+axislegend(ax8a; position = :lt, framevisible = true, labelsize = 11)
+
+ax8b = Axis(fig8[1, 2]; xlabel = "Year", ylabel = "Signal",
+    title = "Weighted (w = 1/σ²) — noisy intervals suppressed")
+linesegments!(ax8b, vcat(collect(zip(pt1_clean, pt2_clean))...);
+    color = (:black, 0.35), linewidth = 2,   label = "Observations (σ≈1.5)")
+linesegments!(ax8b, vcat(collect(zip(pt1_noisy, pt2_noisy))...);
+    color = (:crimson, 0.9), linewidth = 3,  label = "High-noise obs (w≈0.016)")
+band!(ax8b, t_output, wei_μ_w .- 2 .* wei_std_w, wei_μ_w .+ 2 .* wei_std_w;
+    color = (:forestgreen, 0.2))
+lines!(ax8b, t_output, wei_μ_w; color = :forestgreen, linewidth = 2.5, label = "Weighted spline")
+lines!(ax8b, t_decyear, signal;  color = (:black, 0.2), linewidth = 1, label = "True signal")
+axislegend(ax8b; position = :lt, framevisible = true, labelsize = 11)
+
+save("docs/images/weights_detail.png", fig8, px_per_unit = 2)
+println("Saved weights_detail.png")
