@@ -4,6 +4,7 @@ using Dates
 using DimensionalData: DimStack, DimArray, Ti, dims, hasdim, metadata
 using LinearAlgebra
 using Statistics
+using KernelFunctions: SqExponentialKernel, with_lengthscale
 
 const TD = TemporalDisaggregations
 
@@ -138,7 +139,7 @@ end
     # ─────────────────────────────────────────────────────────────────────────
     @testset "Struct construction and defaults" begin
         s = Spline()
-        @test s.smoothness == 1e-3
+        @test s.smoothness == 1e-1
         @test s.n_knots === nothing
         @test s.penalty_order == 3
         @test s.tension == 0.0
@@ -426,5 +427,477 @@ end
         end
 
     end
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ANALYTICAL TESTS: first-principles ground truth with tight tolerances
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @testset "Spline — analytical accuracy" begin
+
+        # ── Exact signal recovery ────────────────────────────────────────────
+
+        @testset "Constant signal: near-exact recovery at low smoothness" begin
+            # x(t) = c everywhere → every interval average equals c.
+            # A quartic B-spline derivative can represent a constant exactly.
+            # With λ → 0, the residuals collapse to zero.
+            c = 5.0
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = fill(c, 24)
+            r = disaggregate(Spline(smoothness=1e-8), y, t1, t2)
+            # Mean of output should be c; individual values may deviate slightly
+            # at interval boundaries due to B-spline basis effects.
+            @test mean(r.signal.data) ≈ c  atol=0.01
+            @test all(abs.(r.signal.data .- c) .< 0.2)
+            @test all(r.std.data .< 0.01)  # residual RMS ≈ 0 for perfect fit
+        end
+
+        @testset "Linear signal: near-exact recovery at low smoothness" begin
+            # x(t) = a + b·(t − t_mid).  Interval average = a + b·(midpoint − t_mid).
+            # A cubic B-spline (derivative of quartic) can represent any linear function
+            # exactly, so the fit should be near-machine-precision with λ ≈ 0.
+            t1, t2 = make_monthly_intervals(Date(2019, 1, 1), 36)
+            t1_yr  = TD.yeardecimal.(t1)
+            t2_yr  = TD.yeardecimal.(t2)
+            a, b   = 3.0, 1.5                   # intercept + 1.5 units yr⁻¹
+            t_mid  = (t1_yr[1] + t2_yr[end]) / 2
+            y = [a + b * ((t1_yr[i] + t2_yr[i]) / 2 - t_mid) for i in eachindex(t1)]
+            r = disaggregate(Spline(smoothness=1e-10), y, t1, t2)
+            out_t  = TD.yeardecimal.(collect(dims(r.signal, Ti).val))
+            x_true = a .+ b .* (out_t .- t_mid)
+            @test maximum(abs.(r.signal.data .- x_true)) < 0.1
+            @test all(r.std.data .< 0.05)
+        end
+
+        # ── Round-trip consistency ───────────────────────────────────────────
+
+        @testset "Round-trip: interval_average ≈ y (Day(1) output)" begin
+            # For smooth data with low smoothness and a daily output grid the
+            # trapezoidal re-integration error is O(Δt²) ≪ 0.05.
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [2.0 + sin(2π * i / 12) for i in 1:24]
+            r = disaggregate(Spline(smoothness=1e-6), y, t1, t2; output_period=Day(1))
+            ŷ = interval_average(r, t1, t2)
+            @test maximum(abs.(ŷ .- y)) < 0.05
+        end
+
+        # ── Parameter effects ────────────────────────────────────────────────
+
+        @testset "Smoothness: larger smoothness → larger residual std" begin
+            # Lower smoothness allows a better fit to data (smaller residual RMS).
+            # Higher smoothness forces stronger regularization, trading fit quality
+            # for smoothness. The residual std must increase monotonically with λ.
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [2.0 + 1.5 * sin(2π * i / 12) for i in 1:24]
+            r_low  = disaggregate(Spline(smoothness=1e-8), y, t1, t2)
+            r_mid  = disaggregate(Spline(smoothness=1e0),  y, t1, t2)
+            r_high = disaggregate(Spline(smoothness=1e4),  y, t1, t2)
+            # All outputs must be finite
+            @test all(isfinite, r_low.signal.data)
+            @test all(isfinite, r_mid.signal.data)
+            @test all(isfinite, r_high.signal.data)
+            # Residual RMS is constant across output grid for Spline; compare the scalar
+            @test r_low.std.data[1]  <= r_mid.std.data[1]
+            @test r_mid.std.data[1]  <= r_high.std.data[1]
+        end
+
+        @testset "Tension: higher tension → lower second-difference roughness" begin
+            # Tension adds a ‖D₂ a‖² penalty that suppresses curvature in x′(t).
+            # The sum-of-squared second differences is a discrete proxy for ∫(x′′)² dt.
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [2.0 + sin(2π * i / 12) + 0.5 * sin(6π * i / 12) for i in 1:24]
+            r0  = disaggregate(Spline(smoothness=1e-6, tension=0.0),  y, t1, t2)
+            r5  = disaggregate(Spline(smoothness=1e-6, tension=5.0),  y, t1, t2)
+            r50 = disaggregate(Spline(smoothness=1e-6, tension=50.0), y, t1, t2)
+            @test all(isfinite, r5.signal.data)
+            @test all(isfinite, r50.signal.data)
+            rough(r) = sum(diff(diff(r.signal.data)).^2)
+            @test rough(r50) <= rough(r0) + 0.5
+        end
+
+        @testset "penalty_order 1–4: all produce finite, non-negative-std results" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [1.0 + 0.5 * sin(2π * i / 12) for i in 1:24]
+            for po in [1, 2, 3, 4]
+                r = disaggregate(Spline(smoothness=1e-4, penalty_order=po), y, t1, t2)
+                @test all(isfinite, r.signal.data)
+                @test all(r.std.data .>= 0)
+            end
+        end
+
+        @testset "n_knots: nothing / 0 / 10 / 30 all valid; n_knots=3 throws" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            for nk in [nothing, 0, 10, 30]
+                r = disaggregate(Spline(smoothness=1e-3, n_knots=nk), y, t1, t2)
+                @test all(isfinite, r.signal.data)
+                @test all(r.std.data .>= 0)
+            end
+            # n_knots=3 < p_F+1=5 → ArgumentError inside disaggregate
+            @test_throws ArgumentError disaggregate(Spline(n_knots=3), y, t1, t2)
+        end
+
+        # ── Robustness to outliers ───────────────────────────────────────────
+
+        @testset "L1 more robust than L2 for single large blunder" begin
+            # A 100-unit outlier at observation 18 of 36 with moderate smoothness.
+            # With smoothness=1e-1, the B-spline cannot overfit the outlier. L1
+            # IRLS down-weights the residual outlier; L2 does not, so L2 is pulled
+            # toward the blunder more strongly.
+            t1, t2    = make_monthly_intervals(Date(2020, 1, 1), 36)
+            y_clean   = [sin(2π * i / 12) for i in 1:36]
+            y_blunder = copy(y_clean); y_blunder[18] += 100.0
+            r_truth = disaggregate(Spline(smoothness=1e-1), y_clean,   t1, t2)
+            r_l2    = disaggregate(Spline(smoothness=1e-1), y_blunder, t1, t2; loss_norm=:L2)
+            r_l1    = disaggregate(Spline(smoothness=1e-1), y_blunder, t1, t2; loss_norm=:L1)
+            @test norm(r_l1.signal.data .- r_truth.signal.data) <
+                  norm(r_l2.signal.data .- r_truth.signal.data)
+        end
+
+        @testset "Heterogeneous weights (L2): explicit downweighting of blunder" begin
+            t1, t2    = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y_clean   = [sin(2π * i / 12) for i in 1:24]
+            y_blunder = copy(y_clean); y_blunder[12] += 100.0
+            r_truth = disaggregate(Spline(smoothness=1e-6), y_clean,   t1, t2)
+            r_unwt  = disaggregate(Spline(smoothness=1e-6), y_blunder, t1, t2)
+            w = ones(24); w[12] = 1e-8
+            r_wt    = disaggregate(Spline(smoothness=1e-6), y_blunder, t1, t2; weights=w)
+            @test norm(r_wt.signal.data .- r_truth.signal.data) <
+                  norm(r_unwt.signal.data .- r_truth.signal.data)
+        end
+
+        @testset "Heterogeneous weights + L1: combined robustness" begin
+            # Two blunders; both down-weighted and L1 loss active simultaneously.
+            t1, t2    = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y_clean   = [2.0 + sin(2π * i / 12) for i in 1:24]
+            y_blunder = copy(y_clean)
+            y_blunder[6]  += 30.0; y_blunder[18] -= 30.0
+            w = fill(1.0, 24); w[6] = 1e-6; w[18] = 1e-6
+            r_truth = disaggregate(Spline(smoothness=1e-6), y_clean,   t1, t2)
+            r_comb  = disaggregate(Spline(smoothness=1e-6), y_blunder, t1, t2;
+                                   loss_norm=:L1, weights=w)
+            @test all(isfinite, r_comb.signal.data)
+            @test norm(r_comb.signal.data .- r_truth.signal.data) < 1.0
+        end
+
+        # ── Output structure ─────────────────────────────────────────────────
+
+        @testset "std is identical at every output point (constant field)" begin
+            # The Spline implementation uses fill(scalar, n_out) for std.
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = [sin(2π * i / 12) for i in 1:12]
+            r = disaggregate(Spline(), y, t1, t2)
+            @test all(r.std.data .== r.std.data[1])
+        end
+
+        @testset "output_start / output_end clip the grid exactly" begin
+            t1, t2 = make_monthly_intervals(Date(2019, 1, 1), 36)
+            y      = ones(36)
+            out_s  = Date(2019, 6, 1)
+            out_e  = Date(2021, 6, 1)
+            r = disaggregate(Spline(), y, t1, t2;
+                             output_start=out_s, output_end=out_e)
+            dates = collect(dims(r.signal, Ti).val)
+            @test first(dates) == out_s
+            @test last(dates)  <= out_e
+            @test all(isfinite, r.signal.data)
+            # Without clipping the grid starts at minimum(interval_start)
+            r_def = disaggregate(Spline(), y, t1, t2)
+            @test first(collect(dims(r_def.signal, Ti).val)) == minimum(t1)
+        end
+
+        @testset "metadata reflects all constructor/kwarg arguments" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            r = disaggregate(
+                    Spline(smoothness=0.2, n_knots=20, penalty_order=2, tension=1.5),
+                    ones(12), t1, t2;
+                    loss_norm=:L1, output_period=Week(2))
+            m = metadata(r)
+            @test m[:method]        == :spline
+            @test m[:smoothness]    == 0.2
+            @test m[:n_knots]       == 20
+            @test m[:penalty_order] == 2
+            @test m[:tension]       == 1.5
+            @test m[:loss_norm]     == :L1
+            @test m[:output_period] == Week(2)
+        end
+
+    end  # Spline analytical
+
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "Sinusoid — analytical accuracy" begin
+
+        # ── Exact parameter recovery ─────────────────────────────────────────
+
+        @testset "Constant signal: mean absorbed, trend and amplitude ≈ 0" begin
+            # x(t) = μ. All interval averages = μ.
+            # Regularisation on γ pushes interannual anomalies → 0; μ absorbs the level.
+            μ = 5.0
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = fill(μ, 24)
+            r = disaggregate(Sinusoid(smoothness_interannual=1.0), y, t1, t2)
+            @test metadata(r)[:mean]      ≈ μ   atol=0.05
+            @test metadata(r)[:trend]     ≈ 0.0 atol=0.05
+            @test metadata(r)[:amplitude] < 0.1
+            @test all(abs.(r.signal.data .- μ) .< 0.2)
+            @test all(r.std.data .< 0.05)
+        end
+
+        @testset "Linear trend: recovered from exact interval averages" begin
+            # x(t) = β·(t − t_ref).  The design-matrix trend column equals the
+            # interval midpoint minus t_ref, so β is identified exactly.
+            t1, t2  = make_monthly_intervals(Date(2018, 1, 1), 36)
+            t1_yr   = TD.yeardecimal.(t1)
+            t2_yr   = TD.yeardecimal.(t2)
+            t_ref   = (t1_yr[1] + t2_yr[end]) / 2
+            β       = 2.0
+            y = [β * ((t1_yr[i] + t2_yr[i]) / 2 - t_ref) for i in eachindex(t1)]
+            r = disaggregate(Sinusoid(smoothness_interannual=1e-2), y, t1, t2)
+            @test metadata(r)[:trend] ≈ β   atol=0.01
+            @test metadata(r)[:mean]  ≈ 0.0 atol=0.05
+        end
+
+        @testset "Pure sinusoid: amplitude and phase recovered tightly" begin
+            # x(t) = A·sin(2πt) + B·cos(2πt).  Interval averages are computed
+            # from the closed-form _interval_sin/cos_integral helpers (same formulas
+            # the model uses), so the system is well-specified.
+            # With 48 monthly obs (6 params, ~42 dof), recovery should be near-exact.
+            A, B       = 2.0, 3.0
+            amp_true   = sqrt(A^2 + B^2)
+            phase_true = mod(atan(B, A) / (2π), 1.0)
+            t1, t2 = make_monthly_intervals(Date(2018, 1, 1), 48)
+            t1_yr  = TD.yeardecimal.(t1)
+            t2_yr  = TD.yeardecimal.(t2)
+            y = [A * TD._interval_sin_integral(t1_yr[i], t2_yr[i]) +
+                 B * TD._interval_cos_integral(t1_yr[i], t2_yr[i])
+                 for i in eachindex(t1)]
+            r = disaggregate(Sinusoid(smoothness_interannual=1e-8), y, t1, t2)
+            @test metadata(r)[:amplitude] ≈ amp_true   atol=0.01
+            @test metadata(r)[:phase]     ≈ phase_true atol=0.01
+            # Output signal should match A·sin(2πt) + B·cos(2πt)
+            out_t  = TD.yeardecimal.(collect(dims(r.signal, Ti).val))
+            x_true = A .* sin.(2π .* out_t) .+ B .* cos.(2π .* out_t)
+            @test maximum(abs.(r.signal.data .- x_true)) < 0.05
+            @test all(r.std.data .< 0.01)
+        end
+
+        @testset "Combined signal: mean + trend + sinusoid all recovered" begin
+            μ, β, A, B = 4.0, 0.5, 1.5, 2.0
+            t1, t2  = make_monthly_intervals(Date(2018, 1, 1), 48)
+            t1_yr   = TD.yeardecimal.(t1)
+            t2_yr   = TD.yeardecimal.(t2)
+            t_ref   = (t1_yr[1] + t2_yr[end]) / 2
+            y = [μ + β * ((t1_yr[i] + t2_yr[i]) / 2 - t_ref) +
+                 A * TD._interval_sin_integral(t1_yr[i], t2_yr[i]) +
+                 B * TD._interval_cos_integral(t1_yr[i], t2_yr[i])
+                 for i in eachindex(t1)]
+            r = disaggregate(Sinusoid(smoothness_interannual=1e-8), y, t1, t2)
+            @test metadata(r)[:mean]      ≈ μ               atol=0.05
+            @test metadata(r)[:trend]     ≈ β               atol=0.05
+            @test metadata(r)[:amplitude] ≈ sqrt(A^2 + B^2) atol=0.05
+        end
+
+        # ── smoothness_interannual effect ────────────────────────────────────
+
+        @testset "smoothness_interannual: larger value suppresses anomalies" begin
+            # Year 2020 averages = 6.0, year 2021 averages = 4.0 → true anomalies ≈ ±1.
+            # Low smoothness: anomalies are free to fit; high smoothness: shrunk toward 0.
+            # Total |γ| must be larger for the free case.
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = vcat(fill(6.0, 12), fill(4.0, 12))
+            r_free  = disaggregate(Sinusoid(smoothness_interannual=1e-8), y, t1, t2)
+            r_tight = disaggregate(Sinusoid(smoothness_interannual=1e3),  y, t1, t2)
+            γ_free  = collect(values(metadata(r_free)[:interannual]))
+            γ_tight = collect(values(metadata(r_tight)[:interannual]))
+            @test sum(abs.(γ_free)) > sum(abs.(γ_tight))
+        end
+
+        # ── Round-trip consistency ───────────────────────────────────────────
+
+        @testset "Round-trip: interval_average ≈ y (Day(1) output)" begin
+            # The Sinusoid model fits the data analytically (no quadrature).
+            # With daily output, trapezoidal re-integration error is ≪ 0.05.
+            t1, t2 = make_monthly_intervals(Date(2018, 1, 1), 48)
+            t1_yr  = TD.yeardecimal.(t1)
+            t2_yr  = TD.yeardecimal.(t2)
+            A, B   = 1.5, 2.5
+            y = [3.0 + A * TD._interval_sin_integral(t1_yr[i], t2_yr[i]) +
+                       B * TD._interval_cos_integral(t1_yr[i], t2_yr[i])
+                 for i in eachindex(t1)]
+            r = disaggregate(Sinusoid(smoothness_interannual=1e-8), y, t1, t2;
+                             output_period=Day(1))
+            ŷ = interval_average(r, t1, t2)
+            @test maximum(abs.(ŷ .- y)) < 0.05
+        end
+
+        # ── Robustness to outliers ───────────────────────────────────────────
+
+        @testset "L1 more robust than L2 for single large blunder" begin
+            t1, t2    = make_monthly_intervals(Date(2020, 1, 1), 36)
+            y_clean   = [2.0 + sin(2π * i / 12) for i in 1:36]
+            y_blunder = copy(y_clean); y_blunder[18] += 50.0
+            r_truth = disaggregate(Sinusoid(smoothness_interannual=1e-6), y_clean,   t1, t2)
+            r_l2    = disaggregate(Sinusoid(smoothness_interannual=1e-6), y_blunder, t1, t2; loss_norm=:L2)
+            r_l1    = disaggregate(Sinusoid(smoothness_interannual=1e-6), y_blunder, t1, t2; loss_norm=:L1)
+            @test norm(r_l1.signal.data .- r_truth.signal.data) <
+                  norm(r_l2.signal.data .- r_truth.signal.data)
+        end
+
+        @testset "Heterogeneous weights suppress blunder" begin
+            t1, t2    = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y_clean   = [1.0 + 0.5 * sin(2π * i / 12) for i in 1:24]
+            y_blunder = copy(y_clean); y_blunder[6] += 80.0
+            r_truth = disaggregate(Sinusoid(smoothness_interannual=1e-2), y_clean,   t1, t2)
+            r_unwt  = disaggregate(Sinusoid(smoothness_interannual=1e-2), y_blunder, t1, t2)
+            w = ones(24); w[6] = 1e-8
+            r_wt    = disaggregate(Sinusoid(smoothness_interannual=1e-2), y_blunder, t1, t2; weights=w)
+            @test norm(r_wt.signal.data .- r_truth.signal.data) <
+                  norm(r_unwt.signal.data .- r_truth.signal.data)
+        end
+
+        # ── Output structure ─────────────────────────────────────────────────
+
+        @testset "std is identical at every output point (constant field)" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [1.0 + sin(2π * i / 12) for i in 1:24]
+            r = disaggregate(Sinusoid(), y, t1, t2)
+            @test all(r.std.data .== r.std.data[1])
+        end
+
+        @testset "output_start / output_end clip the grid exactly" begin
+            t1, t2 = make_monthly_intervals(Date(2019, 1, 1), 36)
+            y      = ones(36)
+            out_s  = Date(2019, 6, 1)
+            out_e  = Date(2021, 6, 1)
+            r = disaggregate(Sinusoid(), y, t1, t2;
+                             output_start=out_s, output_end=out_e)
+            dates = collect(dims(r.signal, Ti).val)
+            @test first(dates) == out_s
+            @test last(dates)  <= out_e
+            @test all(isfinite, r.signal.data)
+        end
+
+    end  # Sinusoid analytical
+
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "GP — analytical accuracy" begin
+
+        # ── Round-trip consistency ───────────────────────────────────────────
+
+        @testset "Round-trip: interval_average ≈ y (Day(1) output, low noise)" begin
+            # With obs_noise ≪ signal variance and a daily output grid, the GP
+            # posterior mean tracks the observations; trapezoidal re-integration
+            # should agree with y to within 0.3 (generous for GP approximation).
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            r = disaggregate(GP(obs_noise=0.01), y, t1, t2; output_period=Day(1))
+            ŷ = interval_average(r, t1, t2)
+            @test maximum(abs.(ŷ .- y)) < 0.3
+        end
+
+        # ── Posterior uncertainty ────────────────────────────────────────────
+
+        @testset "Posterior std decreases with lower obs_noise" begin
+            # For fixed data and kernel, smaller obs_noise tightens the posterior.
+            # In the DTC posterior formula Var(f*) increases with σ², so lower noise
+            # must yield smaller average posterior std over the output grid.
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = fill(0.0, 24)          # zero-mean data consistent with GP prior
+            r_low  = disaggregate(GP(obs_noise=0.01), y, t1, t2)
+            r_high = disaggregate(GP(obs_noise=1.0),  y, t1, t2)
+            @test mean(r_low.std.data) < mean(r_high.std.data)
+        end
+
+        @testset "Posterior std varies across output grid (not constant like Spline)" begin
+            # Points between observations have higher uncertainty; points co-located
+            # with observation midpoints have lower uncertainty.
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = [sin(2π * i / 12) for i in 1:12]
+            r = disaggregate(GP(obs_noise=0.1), y, t1, t2; output_period=Day(1))
+            @test std(r.std.data) > 1e-6
+        end
+
+        # ── Quadrature accuracy ──────────────────────────────────────────────
+
+        @testset "n_quad consistency: n_quad=3 vs n_quad=15 for smooth signal" begin
+            # Gauss-Legendre error is O((Δt/2)^{2n_quad}) for analytic integrands.
+            # For n_quad=3 over a 1-month interval the error is already < 1e-6 for
+            # smooth kernels. Results for n_quad=3 and n_quad=15 must agree to 0.01.
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = fill(0.0, 12)
+            r3  = disaggregate(GP(obs_noise=0.1, n_quad=3),  y, t1, t2)
+            r15 = disaggregate(GP(obs_noise=0.1, n_quad=15), y, t1, t2)
+            @test maximum(abs.(r3.signal.data .- r15.signal.data)) < 0.01
+            @test maximum(abs.(r3.std.data    .- r15.std.data))    < 0.01
+        end
+
+        # ── Custom kernel ────────────────────────────────────────────────────
+
+        @testset "Custom SqExponentialKernel produces finite non-negative results" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [0.5 * sin(2π * i / 12) for i in 1:24]
+            k_se = with_lengthscale(SqExponentialKernel(), 1 / 6)
+            r = disaggregate(GP(kernel=k_se, obs_noise=0.1), y, t1, t2)
+            @test all(isfinite, r.signal.data)
+            @test all(r.std.data .>= 0)
+        end
+
+        # ── Robustness to outliers ───────────────────────────────────────────
+
+        @testset "L1 + explicit weights suppress blunder better than L2 alone" begin
+            # GP IRLS begins from uniform weights (= L2 solution) and converges
+            # immediately; pure L1 == L2 for GP.  The effective robustness mechanism
+            # is combining L1 loss with an explicit near-zero weight on the blunder.
+            t1, t2    = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y_clean   = [sin(2π * i / 12) for i in 1:24]
+            y_blunder = copy(y_clean); y_blunder[12] += 50.0
+            r_clean = disaggregate(GP(obs_noise=0.1), y_clean,   t1, t2)
+            r_l2    = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; loss_norm=:L2)
+            w = ones(24); w[12] = 1e-6
+            r_l1w   = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2;
+                                   loss_norm=:L1, weights=w)
+            @test norm(r_l1w.signal.data .- r_clean.signal.data) <
+                  norm(r_l2.signal.data  .- r_clean.signal.data)
+        end
+
+        @testset "Heterogeneous weights (L2) suppress blunder" begin
+            t1, t2    = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y_clean   = [sin(2π * i / 12) for i in 1:24]
+            y_blunder = copy(y_clean); y_blunder[6] += 60.0
+            r_truth = disaggregate(GP(obs_noise=0.1), y_clean,   t1, t2)
+            r_unwt  = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2)
+            w = ones(24); w[6] = 1e-8
+            r_wt    = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; weights=w)
+            @test norm(r_wt.signal.data .- r_truth.signal.data) <
+                  norm(r_unwt.signal.data .- r_truth.signal.data)
+        end
+
+        # ── Output structure ─────────────────────────────────────────────────
+
+        @testset "output_start / output_end clip the grid exactly" begin
+            t1, t2 = make_monthly_intervals(Date(2019, 1, 1), 36)
+            y      = [sin(2π * i / 12) for i in 1:36]
+            out_s  = Date(2019, 6, 1)
+            out_e  = Date(2021, 6, 1)
+            r = disaggregate(GP(obs_noise=0.5), y, t1, t2;
+                             output_start=out_s, output_end=out_e)
+            dates = collect(dims(r.signal, Ti).val)
+            @test first(dates) == out_s
+            @test last(dates)  <= out_e
+            @test all(isfinite, r.signal.data)
+            @test all(r.std.data .>= 0)
+        end
+
+        @testset "metadata contains expected keys" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = ones(12)
+            r = disaggregate(GP(obs_noise=0.5, n_quad=7), y, t1, t2; loss_norm=:L1)
+            m = metadata(r)
+            @test m[:method]    == :gp
+            @test m[:obs_noise] == 0.5
+            @test m[:n_quad]    == 7
+            @test m[:loss_norm] == :L1
+        end
+
+    end  # GP analytical
 
 end

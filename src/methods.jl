@@ -20,7 +20,7 @@ The `:std` layer in the returned `DimStack` is constant across the output grid a
 the residual standard deviation of predicted vs. observed interval averages: `std(y .- ŷ)`.
 
 # Keywords
-- `smoothness::Float64 = 1e-3`: Regularization strength λ (larger = smoother).
+- `smoothness::Float64 = 1e-1`: Regularization strength λ (larger = smoother).
 - `n_knots::Union{Int,Nothing} = nothing`: Number of knots (`nothing` = auto monthly, `0` = dense).
 - `penalty_order::Int = 3`: Order of the difference penalty.
 - `tension::Float64 = 0.0`: Tension penalty strength (0 = standard P-spline).

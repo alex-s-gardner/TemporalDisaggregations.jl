@@ -7,7 +7,7 @@ Reconstruct an instantaneous time series from interval-averaged observations.
 
 # Arguments
 - `method::DisaggregationMethod`: Algorithm configuration. One of:
-  - `Spline(; smoothness, n_knots, penalty_order, tension)`
+  - `Spline(; smoothness=1e-1, n_knots, penalty_order, tension)`
   - `Sinusoid(; smoothness_interannual)`
   - `GP(; kernel, obs_noise, n_quad)`
 - `aggregate_values`: Vector of n observed averages over each interval.
