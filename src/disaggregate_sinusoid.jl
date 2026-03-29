@@ -122,8 +122,9 @@ function disaggregate(m::Sinusoid,
     seasonal_phase     = mod(atan(B_fit, A_fit) / (2π), 1.0)
 
     # ── Evaluate on output grid ───────────────────────────────────────────────
-    t_out_end = isnothing(output_end) ? t2[end] : yeardecimal(output_end)
-    out_dates, eval_times = _date_grid(t1[1], t_out_end, output_period; output_start)
+    out_start = isnothing(output_start) ? minimum(interval_start) : output_start
+    out_end   = isnothing(output_end)   ? maximum(interval_end)   : output_end
+    out_dates, eval_times = _date_grid(out_start, out_end, output_period)
 
     # Interpolate interannual anomalies with a natural cubic spline through year
     # centres (year + 0.5, γ_year), then add trend, offset, and seasonality.
@@ -169,7 +170,7 @@ function disaggregate(m::Sinusoid,
             :method                 => :sinusoid,
             :smoothness_interannual => m.smoothness_interannual,
             :loss_norm              => loss_norm,
-            :output_period    => output_period,
+            :output_period          => output_period,
             :mean                   => μ_fit,
             :trend                  => β_fit,
             :amplitude              => seasonal_amplitude,

@@ -36,12 +36,14 @@ function disaggregate(m::GP,
 
     # ── Inducing grid: 2× finer than output, floored at Day(1) ───────────────────
     inducing_period = _half_period(output_period)
-    t_out_end = isnothing(output_end) ? t2[end] : yeardecimal(output_end)
-    ind_dates, Z  = _date_grid(t1[1], t_out_end, inducing_period)
+    ind_start = minimum(interval_start)
+    ind_end   = isnothing(output_end) ? maximum(interval_end) : output_end
+    ind_dates, Z  = _date_grid(ind_start, ind_end, inducing_period)
     n_ind = length(Z)
 
     # ── Output grid ───────────────────────────────────────────────────────────────
-    out_dates, Z_out = _date_grid(t1[1], t_out_end, output_period; output_start)
+    out_start = isnothing(output_start) ? ind_start : output_start
+    out_dates, Z_out = _date_grid(out_start, ind_end, output_period)
 
     # ── Gauss-Legendre quadrature ─────────────────────────────────────────────
     # GL weights sum to 2 on [−1, 1]; dividing by 2 gives a mean-approximation
@@ -91,7 +93,7 @@ function disaggregate(m::GP,
             CtWy       = C' * W_eff * y
             v          = L_M \ CtWy
             μ_Z_new    = (CtWy .- S_W * v) ./ σ²
-            r          = y .- C * μ_Z_new
+            r          = y .- C * v
             w_irls     = _irls_weights(r, ε_irls)
             _irls_converged(μ_Z_new, μ_Z) && (μ_Z = μ_Z_new; break)
             μ_Z = μ_Z_new
