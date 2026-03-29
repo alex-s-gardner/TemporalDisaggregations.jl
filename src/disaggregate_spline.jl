@@ -40,18 +40,20 @@ function disaggregate(m::Spline,
     #   monthly grid (default) → m ≈ 12·years, system is overdetermined, smooth by default.
     #   dense grid (n_knots=0) → m ≈ 2n, underdetermined, requires large smoothness.
     p_F        = 4
-    t_range_yr = t2[end] - t1[1]
+    t1_min     = minimum(t1)
+    t2_max     = maximum(t2)
+    t_range_yr = t2_max - t1_min
     t_nodes = if isnothing(m.n_knots)
         # Auto monthly: 12 knots per year, minimum p_F+2 to form a valid space
         n_auto = max(p_F + 2, round(Int, 12 * t_range_yr) + 1)
-        collect(range(t1[1], t2[end]; length = n_auto))
+        collect(range(t1_min, t2_max; length = n_auto))
     elseif m.n_knots == 0
         # Dense: one knot per unique interval endpoint (old default; requires large λ)
         sort(unique(vcat(t1, t2)))
     else
         m.n_knots >= p_F + 1 ||
             throw(ArgumentError("n_knots must be ≥ $(p_F + 1) for degree-$p_F B-splines."))
-        collect(range(t1[1], t2[end]; length = m.n_knots))
+        collect(range(t1_min, t2_max; length = m.n_knots))
     end
     k_F     = KnotVector(t_nodes) + p_F * KnotVector([t_nodes[1], t_nodes[end]])
     P_F     = BSplineSpace{p_F}(k_F)
@@ -113,8 +115,9 @@ function disaggregate(m::Spline,
     dP_F = BasicBSpline.derivative(P_F)
 
     # Evaluate on the output grid clamped to the data domain
-    t_out_end = isnothing(output_end) ? t_nodes[end] : yeardecimal(output_end)
-    out_dates, eval_times = _date_grid(t_nodes[1], t_out_end, output_period; output_start)
+    out_start = isnothing(output_start) ? minimum(interval_start) : output_start
+    out_end   = isnothing(output_end)   ? maximum(interval_end)   : output_end
+    out_dates, eval_times = _date_grid(out_start, out_end, output_period)
     eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
 
     values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:n_basis) for t in eval_times]

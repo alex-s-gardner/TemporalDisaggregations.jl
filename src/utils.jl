@@ -2,32 +2,15 @@ using Dates
 using LinearAlgebra
 
 """
-    _date_grid(t_min, t_max, step; output_start=nothing)
+    _date_grid(start, stop, step)
 
-Return `(dates, yeardecimals)` for a `Date` grid covering `[t_min, t_max]` with the
-given `step` (any `Dates.Period`), where both bounds are decimal years.
-
-If `output_start` is provided, it anchors the grid:
-- For `Month` steps: the day-of-month from `output_start` is used (e.g. 15th of each month).
-- For other steps: `output_start` is used as the literal start date.
+Return `(dates, yeardecimals)` for a grid `start:step:stop` where `start` and `stop`
+are `Date` or `DateTime`. Sub-daily steps coerce `Date` inputs to `DateTime`.
 """
-function _date_grid(t_min::Real, t_max::Real, step::Dates.Period;
-                    output_start::Union{Dates.TimeType,Nothing} = nothing)
+function _date_grid(start::Dates.TimeType, stop::Dates.TimeType, step::Dates.Period)
     sub_day = step isa Union{Hour, Minute, Second, Millisecond}
-
-    yr0 = floor(Int, t_min); ndays0 = isleapyear(yr0) ? 366 : 365
-    d0_date = Date(yr0, 1, 1) + Day(floor(Int, (t_min - yr0) * ndays0))
-    if isnothing(output_start)
-        d_start = sub_day ? DateTime(d0_date) : d0_date
-    elseif step isa Month
-        m0      = clamp(floor(Int, (t_min - yr0) * 12) + 1, 1, 12)
-        d_start = Date(yr0, m0, min(day(output_start), daysinmonth(yr0, m0)))
-    else
-        d_start = sub_day && output_start isa Date ? DateTime(output_start) : output_start
-    end
-    yr1 = floor(Int, t_max); ndays1 = isleapyear(yr1) ? 366 : 365
-    d1_date = Date(yr1, 1, 1) + Day(floor(Int, (t_max - yr1) * ndays1))
-    d_end   = sub_day ? DateTime(d1_date) : d1_date
+    d_start = (sub_day && start isa Date) ? DateTime(start) : start
+    d_end   = (sub_day && stop  isa Date) ? DateTime(stop)  : stop
     dates = collect(d_start:step:d_end)
     times = yeardecimal.(dates)
     return dates, times

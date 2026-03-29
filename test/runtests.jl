@@ -49,17 +49,25 @@ end
 
     # ─────────────────────────────────────────────────────────────────────────
     @testset "Helper: _date_grid" begin
-        dates, times = TD._date_grid(2020.0, 2021.0, Day(1))
+        dates, times = TD._date_grid(Date(2020, 1, 1), Date(2021, 1, 1), Day(1))
         @test first(dates) == Date(2020, 1, 1)
         @test length(dates) > 300
         @test issorted(dates)
         @test all(isfinite, times)
 
         # Monthly step should produce 1st-of-month dates
-        dates_m, _ = TD._date_grid(2020.0, 2021.0, Month(1))
+        dates_m, _ = TD._date_grid(Date(2020, 1, 1), Date(2021, 1, 1), Month(1))
         @test first(dates_m) == Date(2020, 1, 1)
         @test last(dates_m)  == Date(2021, 1, 1)
         @test length(dates_m) == 13
+
+        # start anchors the grid exactly
+        dates_os, _ = TD._date_grid(Date(2020, 5, 15), Date(2021, 1, 1), Month(1))
+        @test first(dates_os) == Date(2020, 5, 15)
+        @test all(d -> day(d) == 15, dates_os)
+
+        dates_w, _ = TD._date_grid(Date(2020, 3, 1), Date(2021, 1, 1), Week(2))
+        @test first(dates_w) == Date(2020, 3, 1)
     end
 
     # ─────────────────────────────────────────────────────────────────────────
