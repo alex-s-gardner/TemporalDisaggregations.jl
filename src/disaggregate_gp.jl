@@ -5,7 +5,8 @@ function disaggregate(m::GP,
                       loss_norm::Symbol = :L2,
                       output_period::Dates.Period = Month(1),
                       output_start::Union{Dates.TimeType,Nothing} = nothing,
-                      output_end::Union{Dates.TimeType,Nothing} = nothing)
+                      output_end::Union{Dates.TimeType,Nothing} = nothing,
+                      weights::Union{AbstractVector,Nothing} = nothing)
 
     σ²  = m.obs_noise
     n   = length(aggregate_values)
@@ -20,11 +21,18 @@ function disaggregate(m::GP,
     m.n_quad >= 3 || throw(ArgumentError("n_quad must be ≥ 3."))
     loss_norm ∈ (:L1, :L2) ||
         throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
+    if !isnothing(weights)
+        length(weights) == n ||
+            throw(DimensionMismatch("weights must have the same length as aggregate_values."))
+        all(>(0), weights) ||
+            throw(ArgumentError("All weights must be positive."))
+    end
 
     order = sortperm(interval_start)
     t1    = yeardecimal.(interval_start[order])
     t2    = yeardecimal.(interval_end[order])
     y     = Array(aggregate_values[order])
+    w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
 
     # ── Inducing grid: 2× finer than output, floored at Day(1) ───────────────────
     inducing_period = _half_period(output_period)
@@ -58,24 +66,25 @@ function disaggregate(m::GP,
 
     # ── Sparse GP posterior via matrix inversion lemma ────────────────────────
     # Σ_y = C K⁻¹ Cᵀ + σ²I  [n × n, never formed]
-    # Woodbury: Σ_y⁻¹ = I/σ² − C M'⁻¹ Cᵀ / σ²   where M' = K σ² + CᵀC
+    # Woodbury: Σ_y⁻¹ = I/σ² − C M'⁻¹ Cᵀ / σ²   where M' = K σ² + CᵀWC
 
-    S_W    = C' * C                          # [m × m]  (updated by IRLS for L1)
+    W_obs  = Diagonal(w_obs)
+    S_W    = C' * W_obs * C                  # [m × m]  (updated by IRLS for L1)
     M_W    = Symmetric(K .* σ² .+ S_W)       # [m × m]
     L_M    = cholesky(M_W)
 
-    Cty    = C' * y                          # [m]
-    v      = L_M \ Cty                       # M'⁻¹ Cᵀy  [m]
-    μ_Z    = (Cty .- S_W * v) ./ σ²          # [m]
+    CtWy   = C' * W_obs * y                  # [m]
+    v      = L_M \ CtWy                      # M'⁻¹ CᵀWy  [m]
+    μ_Z    = (CtWy .- S_W * v) ./ σ²         # [m]
 
     # ── L1: IRLS refinement (skipped for :L2) ─────────────────────────────────
-    # Replace W=I with per-obs weights w_irls[i] = 1/(|r_i|+ε), iterate to convergence.
+    # Replace W=W_obs with combined weights w_irls[i]*w_obs[i], iterate to convergence.
     # Predicted interval averages are C*μ_Z (not C*v, which is the Woodbury intermediate).
     if loss_norm == :L1
         ε_irls = 1e-6 * (std(y) + 1e-10)
         w_irls = ones(n)
         for _ in 1:50
-            W_eff      = Diagonal(w_irls)
+            W_eff      = Diagonal(w_irls .* w_obs)
             S_W        = C' * W_eff * C
             M_W        = Symmetric(K .* σ² .+ S_W)
             L_M        = cholesky(M_W)

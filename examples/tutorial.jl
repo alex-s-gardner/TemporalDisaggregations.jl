@@ -3,7 +3,7 @@
 # Run from the repository root:
 #   julia --project=examples examples/tutorial.jl
 #
-# Produces 7 PNG files in examples/figures/.
+# Produces 8 PNG files in examples/figures/.
 # Uses a fixed random seed so all figures are reproducible.
 
 using TemporalDisaggregations
@@ -462,5 +462,71 @@ axislegend(ax7; position = :lt, labelsize = 10)
 
 save(joinpath(fig_dir, "fig7_output_grid.png"), fig7, px_per_unit = 2)
 println("Saved fig7_output_grid.png")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Section 9 — Figure 8: per-observation weights (heteroscedastic noise)
+# ─────────────────────────────────────────────────────────────────────────────
+# weights = 1 ./ σ²_obs down-weights unreliable observations.
+# Use case: instruments with varying precision, data quality flags, or known
+# uncertainty estimates.  Here every 3rd interval has 8× higher noise std.
+# Unweighted fit is pulled towards these noisy values; weighted fit ignores them.
+
+println("\n── Figure 8: per-observation weights (heteroscedastic noise) ──")
+
+# Noiseless ground truth, averaged analytically over each interval
+function true_signal_noiseless(t_dec)
+    amp = seasonal_amp + interannual_amp * sin(2π * (t_dec - 2020.0) / interannual_T)
+    return amp * sin(2π * t_dec) + trend_rate * (t_dec - 2022.0)
+end
+
+n_w    = 36
+t1_w, t2_w = make_monthly_intervals(Date(2020, 1, 1), n_w)
+y_true_w = [mean(true_signal_noiseless.(range(yeardecimal(t1_w[i]),
+                                              yeardecimal(t2_w[i]); length=500)))
+            for i in 1:n_w]
+
+# Heteroscedastic noise: every 3rd interval has 8× higher std
+σ_obs_w  = [mod(i, 3) == 0 ? 8.0 : 1.0 for i in 1:n_w]
+noisy_idx = findall(i -> mod(i, 3) == 0, 1:n_w)
+y_w      = y_true_w .+ σ_obs_w .* randn(n_w)
+w_w      = 1.0 ./ σ_obs_w.^2
+
+r_unw = disaggregate(Spline(), y_w, t1_w, t2_w)
+r_wei = disaggregate(Spline(), y_w, t1_w, t2_w; weights = w_w)
+
+t_w     = t_axis(r_unw)
+unw_μ   = r_unw.signal.data;  unw_σ = r_unw.std.data
+wei_μ   = r_wei.signal.data;  wei_σ = r_wei.std.data
+t_true  = range(yeardecimal(t1_w[1]), yeardecimal(t2_w[end]); length=500)
+y_true_curve = true_signal_noiseless.(collect(t_true))
+
+segs_noisy  = make_segs(t1_w[noisy_idx],                      t2_w[noisy_idx],
+                         y_w[noisy_idx])
+segs_clean  = make_segs(t1_w[setdiff(1:n_w, noisy_idx)],
+                         t2_w[setdiff(1:n_w, noisy_idx)],
+                         y_w[setdiff(1:n_w, noisy_idx)])
+
+fig8 = Figure(size = (1000, 420), fontsize = 12)
+
+ax8a = Axis(fig8[1, 1]; xlabel = "Year", ylabel = "Signal",
+    title = "Unweighted — high-noise intervals (red) distort fit")
+linesegments!(ax8a, segs_clean;  color = (:black, 0.35), linewidth = 2, label = "Clean obs (σ=1)")
+linesegments!(ax8a, segs_noisy;  color = (:crimson, 0.9), linewidth = 3, label = "Noisy obs (σ=8)")
+band!(ax8a, t_w, unw_μ .- 2unw_σ, unw_μ .+ 2unw_σ; color = (:steelblue, 0.2))
+lines!(ax8a, t_w, unw_μ; color = :steelblue, linewidth = 2.5, label = "Unweighted spline")
+lines!(ax8a, collect(t_true), y_true_curve; color = (:black, 0.2), linewidth = 1, label = "True signal")
+axislegend(ax8a; position = :lt, labelsize = 10)
+
+ax8b = Axis(fig8[1, 2]; xlabel = "Year", ylabel = "Signal",
+    title = "Weighted (w = 1/σ²) — noisy intervals down-weighted")
+linesegments!(ax8b, segs_clean;  color = (:black, 0.35), linewidth = 2, label = "Clean obs (σ=1)")
+linesegments!(ax8b, segs_noisy;  color = (:crimson, 0.9), linewidth = 3, label = "Noisy obs (w≈0.016)")
+band!(ax8b, t_w, wei_μ .- 2wei_σ, wei_μ .+ 2wei_σ; color = (:forestgreen, 0.2))
+lines!(ax8b, t_w, wei_μ; color = :forestgreen, linewidth = 2.5, label = "Weighted spline")
+lines!(ax8b, collect(t_true), y_true_curve; color = (:black, 0.2), linewidth = 1, label = "True signal")
+axislegend(ax8b; position = :lt, labelsize = 10)
+
+save(joinpath(fig_dir, "fig8_weights.png"), fig8, px_per_unit = 2)
+println("Saved fig8_weights.png")
 
 println("\nDone. All figures saved to $(fig_dir)/")

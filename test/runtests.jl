@@ -358,4 +358,53 @@ end
         @test r_gp.std isa DimArray
     end
 
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "weights kwarg" begin
+
+        @testset "Validation" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 6)
+            y = ones(6)
+            for method in [Spline(), Sinusoid(), GP()]
+                @test_throws DimensionMismatch disaggregate(method, y, t1, t2; weights = ones(5))
+                @test_throws ArgumentError    disaggregate(method, y, t1, t2; weights = [1,1,1, 0,1,1.0])
+                @test_throws ArgumentError    disaggregate(method, y, t1, t2; weights = [1,1,1,-1,1,1.0])
+            end
+        end
+
+        @testset "Uniform weights match no weights (all methods)" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            for method in [Spline(), Sinusoid(), GP(obs_noise=0.1)]
+                r_none = disaggregate(method, y, t1, t2)
+                r_ones = disaggregate(method, y, t1, t2; weights = ones(24))
+                @test r_none.signal.data ≈ r_ones.signal.data  atol=1e-8
+                @test r_none.std.data    ≈ r_ones.std.data     atol=1e-8
+            end
+        end
+
+        @testset "Near-zero weight suppresses blunder" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y_clean   = [sin(2π * i / 12) for i in 1:24]
+            y_blunder = copy(y_clean)
+            y_blunder[12] += 100.0
+            r_truth      = disaggregate(Spline(), y_clean,   t1, t2)
+            r_unweighted = disaggregate(Spline(), y_blunder, t1, t2)
+            w = ones(24); w[12] = 1e-6
+            r_weighted   = disaggregate(Spline(), y_blunder, t1, t2; weights = w)
+            err_unw = norm(r_unweighted.signal.data - r_truth.signal.data)
+            err_wei = norm(r_weighted.signal.data   - r_truth.signal.data)
+            @test err_wei < err_unw
+        end
+
+        @testset "weights combined with L1 loss" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            w = rand(24) .+ 0.1        # random positive weights
+            r = disaggregate(Spline(), y, t1, t2; loss_norm = :L1, weights = w)
+            @test all(isfinite, r.signal)
+            @test all(r.std.data .>= 0)
+        end
+
+    end
+
 end

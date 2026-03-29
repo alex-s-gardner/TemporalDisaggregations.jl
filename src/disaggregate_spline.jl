@@ -5,7 +5,8 @@ function disaggregate(m::Spline,
                       loss_norm::Symbol = :L2,
                       output_period::Dates.Period = Month(1),
                       output_start::Union{Dates.TimeType,Nothing} = nothing,
-                      output_end::Union{Dates.TimeType,Nothing} = nothing)
+                      output_end::Union{Dates.TimeType,Nothing} = nothing,
+                      weights::Union{AbstractVector,Nothing} = nothing)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -20,12 +21,19 @@ function disaggregate(m::Spline,
         throw(ArgumentError("tension must be ≥ 0."))
     loss_norm ∈ (:L1, :L2) ||
         throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
+    if !isnothing(weights)
+        length(weights) == n ||
+            throw(DimensionMismatch("weights must have the same length as aggregate_values."))
+        all(>(0), weights) ||
+            throw(ArgumentError("All weights must be positive."))
+    end
 
     # Sort intervals chronologically
     order = sortperm(interval_start)
     t1    = yeardecimal.(interval_start[order])
     t2    = yeardecimal.(interval_end[order])
     y     = aggregate_values[order]
+    w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
 
     # Quartic (p=4) B-spline space for F(t); x(t) = F′(t) is cubic.
     # Knot placement is the primary control over smoothness:
@@ -84,15 +92,16 @@ function disaggregate(m::Spline,
     # Weighted least-squares with P-spline (+ optional tension) regularisation.
     # λ scaled by ‖C'C‖/n so `smoothness` is dimensionless.
     ε_irls = 1e-6 * (std(y) + 1e-10)
-    CWC = C_norm' * C_norm
-    λ   = m.smoothness * (norm(CWC) / n + 1e-10)
-    a   = (CWC + λ * P) \ (C_norm' * y)          # L2 init (also final if loss_norm==:L2)
+    W_obs  = Diagonal(w_obs)
+    CWC    = C_norm' * W_obs * C_norm
+    λ      = m.smoothness * (norm(CWC) / n + 1e-10)
+    a      = (CWC + λ * P) \ (C_norm' * W_obs * y)   # L2 init (also final if loss_norm==:L2)
     if loss_norm == :L1
         w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
             r     = y .- C_norm * a
             @. w_irls = 1.0 / (abs(r) + ε_irls)
-            W_eff  = Diagonal(w_irls)
+            W_eff  = Diagonal(w_irls .* w_obs)
             CWC_e  = C_norm' * W_eff * C_norm
             a_new  = (CWC_e + λ * P) \ (C_norm' * W_eff * y)
             _irls_converged(a_new, a) && (a = a_new; break)
@@ -110,7 +119,8 @@ function disaggregate(m::Spline,
 
     values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:n_basis) for t in eval_times]
 
-    std_val = std(y .- C_norm * a)
+    r       = y .- C_norm * a
+    std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
     std_vec = fill(std_val, length(eval_times))
 
     return DimStack(

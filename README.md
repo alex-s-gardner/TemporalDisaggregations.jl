@@ -161,6 +161,19 @@ All methods support `loss_norm = :L1` for robustness to blunders (outliers). L1 
 result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = :L1)
 ```
 
+### Per-observation Weights
+
+When observation uncertainties are known, pass `weights = 1 ./ σ²_obs` to focus the fit on the most reliable measurements. Any positive weight vector works — higher weight means the observation is trusted more.
+
+```julia
+# σ_obs[i] is the known noise standard deviation for observation i
+result = disaggregate(Spline(), y, t1, t2; weights = 1.0 ./ σ_obs.^2)
+```
+
+Weights combine with `loss_norm = :L1`: the IRLS weights are multiplied element-wise with your supplied weights at each iteration, so both mechanisms work together.
+
+![Per-observation weights: unweighted vs weighted spline](docs/images/weights_detail.png)
+
 > Each method derives uncertainty differently, so `std` reflects the method's statistical framework rather than a universal measure of confidence:
 >
 > | Method | What `std` measures | Key caveat |

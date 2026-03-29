@@ -1,7 +1,7 @@
 """
     disaggregate(method, aggregate_values, interval_start, interval_end;
                  loss_norm=:L2, output_period=Month(1), output_start=nothing,
-                 output_end=nothing)
+                 output_end=nothing, weights=nothing)
 
 Reconstruct an instantaneous time series from interval-averaged observations.
 
@@ -17,6 +17,9 @@ Reconstruct an instantaneous time series from interval-averaged observations.
 - `output_start`: Grid anchor `Date` or `DateTime` (default `nothing`).
 - `output_end`: Last date of the output grid as `Date` or `DateTime`. Defaults
   to the end of the data domain.
+- `weights`: Optional vector of n positive per-observation weights (e.g. `1 ./ σ²`).
+  `nothing` (default) uses uniform weights. For `:L1` loss, these are multiplied
+  element-wise with the IRLS weights at each iteration.
 
 # Returns
 `DimStack` with `:signal` and `:std` layers indexed by `Ti(dates)`.
@@ -30,6 +33,7 @@ result = disaggregate(Spline(smoothness=1e-3), y, t1, t2)
 result = disaggregate(GP(obs_noise=4.0), y, t1, t2; loss_norm=:L1)
 result = disaggregate(Sinusoid(), y, t1, t2; output_period=Day(1))
 result = disaggregate(Spline(), y, t1, t2; output_end=Date(2020, 6, 1))
+result = disaggregate(Spline(), y, t1, t2; weights = 1 ./ σ²_obs)
 ```
 """
 function disaggregate end
