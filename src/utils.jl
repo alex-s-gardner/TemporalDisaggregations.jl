@@ -8,9 +8,10 @@ Return `(dates, yeardecimals)` for a grid `start:step:stop` where `start` and `s
 are `Date` or `DateTime`. Sub-daily steps coerce `Date` inputs to `DateTime`.
 """
 function _date_grid(start::Dates.TimeType, stop::Dates.TimeType, step::Dates.Period)
-    sub_day = step isa Union{Hour, Minute, Second, Millisecond}
-    d_start = (sub_day && start isa Date) ? DateTime(start) : start
-    d_end   = (sub_day && stop  isa Date) ? DateTime(stop)  : stop
+    use_datetime = step isa Union{Hour, Minute, Second, Millisecond} ||
+                   start isa DateTime || stop isa DateTime
+    d_start = use_datetime && start isa Date ? DateTime(start) : start
+    d_end   = use_datetime && stop  isa Date ? DateTime(stop)  : stop
     dates = collect(d_start:step:d_end)
     times = yeardecimal.(dates)
     return dates, times
