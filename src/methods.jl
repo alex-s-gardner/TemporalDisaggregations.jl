@@ -26,7 +26,7 @@ the residual standard deviation of predicted vs. observed interval averages: `st
 - `tension::Float64 = 0.0`: Tension penalty strength (0 = standard P-spline).
 """
 @kwdef struct Spline <: DisaggregationMethod
-    smoothness::Float64              = 1e-3
+    smoothness::Float64              = 1e-1
     n_knots::Union{Int,Nothing}      = nothing
     penalty_order::Int               = 3
     tension::Float64                 = 0.0

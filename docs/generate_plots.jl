@@ -192,9 +192,14 @@ noisy_mask  = [mod(i, 3) == 0 for i in 1:n]
 y_hetero    = y .+ σ_extra .* randn(n)
 w_hetero    = ifelse.(noisy_mask, 1.0 / 8.0^2, 1.0)
 
-r_unw_w = disaggregate(Spline(smoothness = 1e-3), y_hetero, t1, t2)
-r_wei_w = disaggregate(Spline(smoothness = 1e-3), y_hetero, t1, t2; weights = w_hetero)
+# output_end trims the grid 3 months before the record edge, where the spline
+# is unconstrained and a boundary-touching noisy observation can cause blowup.
+out_end_w = t_daily[end] - Month(3)
+r_unw_w = disaggregate(Spline(smoothness = 1e-1), y_hetero, t1, t2; output_end = out_end_w)
+r_wei_w = disaggregate(Spline(smoothness = 1e-1), y_hetero, t1, t2; weights = w_hetero,
+                        output_end = out_end_w)
 
+t_output_w = yeardecimal.(dims(r_unw_w, :Ti).val)
 unw_μ_w = r_unw_w.signal.data;  unw_std_w = r_unw_w.std.data
 wei_μ_w = r_wei_w.signal.data;  wei_std_w = r_wei_w.std.data
 
@@ -211,9 +216,9 @@ linesegments!(ax8a, vcat(collect(zip(pt1_clean, pt2_clean))...);
     color = (:black, 0.35), linewidth = 2,   label = "Observations (σ≈1.5)")
 linesegments!(ax8a, vcat(collect(zip(pt1_noisy, pt2_noisy))...);
     color = (:crimson, 0.9), linewidth = 3,  label = "High-noise obs (σ=8)")
-band!(ax8a, t_output, unw_μ_w .- 2 .* unw_std_w, unw_μ_w .+ 2 .* unw_std_w;
+band!(ax8a, t_output_w, unw_μ_w .- 2 .* unw_std_w, unw_μ_w .+ 2 .* unw_std_w;
     color = (:steelblue, 0.2))
-lines!(ax8a, t_output, unw_μ_w; color = :steelblue, linewidth = 2.5, label = "Unweighted spline")
+lines!(ax8a, t_output_w, unw_μ_w; color = :steelblue, linewidth = 2.5, label = "Unweighted spline")
 lines!(ax8a, t_decyear, signal;  color = (:black, 0.2), linewidth = 1, label = "True signal")
 axislegend(ax8a; position = :lt, framevisible = true, labelsize = 11)
 
@@ -223,9 +228,9 @@ linesegments!(ax8b, vcat(collect(zip(pt1_clean, pt2_clean))...);
     color = (:black, 0.35), linewidth = 2,   label = "Observations (σ≈1.5)")
 linesegments!(ax8b, vcat(collect(zip(pt1_noisy, pt2_noisy))...);
     color = (:crimson, 0.9), linewidth = 3,  label = "High-noise obs (w≈0.016)")
-band!(ax8b, t_output, wei_μ_w .- 2 .* wei_std_w, wei_μ_w .+ 2 .* wei_std_w;
+band!(ax8b, t_output_w, wei_μ_w .- 2 .* wei_std_w, wei_μ_w .+ 2 .* wei_std_w;
     color = (:forestgreen, 0.2))
-lines!(ax8b, t_output, wei_μ_w; color = :forestgreen, linewidth = 2.5, label = "Weighted spline")
+lines!(ax8b, t_output_w, wei_μ_w; color = :forestgreen, linewidth = 2.5, label = "Weighted spline")
 lines!(ax8b, t_decyear, signal;  color = (:black, 0.2), linewidth = 1, label = "True signal")
 axislegend(ax8b; position = :lt, framevisible = true, labelsize = 11)
 
