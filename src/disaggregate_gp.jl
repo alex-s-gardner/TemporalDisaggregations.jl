@@ -93,7 +93,7 @@ function disaggregate(m::GP,
             CtWy       = C' * W_eff * y
             v          = L_M \ CtWy
             μ_Z_new    = (CtWy .- S_W * v) ./ σ²
-            r          = y .- C * μ_Z_new
+            r          = y .- C * v
             w_irls     = _irls_weights(r, ε_irls)
             _irls_converged(μ_Z_new, μ_Z) && (μ_Z = μ_Z_new; break)
             μ_Z = μ_Z_new

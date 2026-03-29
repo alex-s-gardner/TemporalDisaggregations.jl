@@ -413,6 +413,18 @@ end
             @test all(r.std.data .>= 0)
         end
 
+        @testset "GP L1 weights suppress blunder" begin
+            t1, t2    = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y_clean   = [sin(2π * i / 12) for i in 1:24]
+            y_blunder = copy(y_clean); y_blunder[12] += 100.0
+            r_clean = disaggregate(GP(obs_noise=0.1), y_clean,   t1, t2; loss_norm=:L1)
+            r_blow  = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; loss_norm=:L1)
+            w = ones(24); w[12] = 1e-6
+            r_w     = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; loss_norm=:L1, weights=w)
+            @test norm(r_w.signal.data - r_clean.signal.data) <
+                  norm(r_blow.signal.data - r_clean.signal.data)
+        end
+
     end
 
 end
