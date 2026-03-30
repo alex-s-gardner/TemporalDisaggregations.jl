@@ -82,10 +82,10 @@ function disaggregate(m::GP,
 
     # ── L1: IRLS refinement (skipped for :L2) ─────────────────────────────────
     # Replace W=W_obs with combined weights w_irls[i]*w_obs[i], iterate to convergence.
-    # Predicted interval averages are C*μ_Z (not C*v, which is the Woodbury intermediate).
+    # Predicted interval averages are C*v (Woodbury intermediate), not C*μ_Z.
+    w_irls = ones(n)                          # identity for L2; overwritten by L1
     if loss_norm == :L1
         ε_irls = 1e-6 * (std(y) + 1e-10)
-        w_irls = ones(n)
         for _ in 1:50
             W_eff      = Diagonal(w_irls .* w_obs)
             S_W        = C' * W_eff * C
@@ -108,7 +108,16 @@ function disaggregate(m::GP,
 
     r       = y .- C * v
     std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
-    std_vec = fill(std_val, length(out_dates))
+
+    # Sandwich variance: std varies with observation density.
+    # μ_out(t*) = k(t*,Z) M_W⁻¹ C' W_eff y  →  Var = σ̂² ‖√w_eff ⊙ C u‖²
+    # where u = M_W⁻¹ k(Z,t*).  Batch: U = M_W⁻¹ K_out_Z^T via two triangular solves.
+    w_eff   = w_irls .* w_obs
+    R_out   = L_M \ K_out_Z'          # L_M⁻¹ K_out_Z^T  [n_ind × n_out]
+    U       = L_M' \ R_out            # M_W⁻¹ K_out_Z^T  [n_ind × n_out]
+    CU      = C * U                   # [n × n_out]
+    var_vec = std_val^2 .* vec(sum((sqrt.(w_eff) .* CU).^2, dims=1))
+    std_vec = sqrt.(var_vec)
 
     return DimStack(
         (signal = DimArray(μ_out,    Ti(out_dates)),

@@ -14,7 +14,7 @@ result = disaggregate(Spline(
 ), y, t1, t2; loss_norm = :L2)
 ```
 
-**Uncertainty:** Residual standard deviation of predicted vs. observed interval averages (constant across output grid).
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![B-spline reconstruction](./assets/spline_detail.png)
 
@@ -55,7 +55,7 @@ md[:trend]        # linear trend (units/year)
 md[:interannual]  # Dict{Int,Float64} of per-year anomalies
 ```
 
-**Uncertainty:** Residual standard deviation of predicted vs. observed interval averages (constant across output grid).
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![Sinusoid reconstruction](./assets/sinusoid_detail.png)
 
@@ -76,15 +76,25 @@ result = disaggregate(GP(
 ), y, t1, t2)
 ```
 
-**Uncertainty:** Residual standard deviation of predicted vs. observed interval averages — the same measure used by Spline and Sinusoid.
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![GP posterior mean and 2σ band](./assets/gp_detail.png)
 
 ## Uncertainty
 
-All three methods return the same type of `std`: the weighted residual standard deviation
-`sqrt(Σ wᵢ rᵢ² / Σ wᵢ)` where `rᵢ = yᵢ − ŷᵢ` (observed minus fitted interval average).
-This value is constant across the output grid and directly measures how well the model
-reproduces the input observations — making it comparable across methods.
+All three methods return the same type of `std` — a spatially-varying sandwich standard deviation:
 
-When using `loss_norm = :L1`, `std` is computed from the final IRLS solution.
+```
+std(t*) = σ̂ · sqrt(q(t*))
+```
+
+where `σ̂` is the weighted residual RMS of predicted vs. observed interval averages
+(`sqrt(Σ wᵢ rᵢ² / Σ wᵢ)`, with `rᵢ = yᵢ − ŷᵢ`) and `q(t*)` is a dimensionless
+coverage factor derived from the method's hat vector at time `t*`:
+
+- **Dense observation coverage** → `q(t*) < 1` → `std(t*) < σ̂`
+- **Sparse observation coverage** → `q(t*) > 1` → `std(t*) > σ̂`
+
+This makes `std` comparable across methods and automatically reflects the temporal
+distribution of the input observations. When using `loss_norm = :L1`, both `σ̂` and
+`q(t*)` are computed from the final IRLS solution.

@@ -76,8 +76,9 @@ t_axis(r) = yeardecimal.(dims(r, Ti).val)
 # ─────────────────────────────────────────────────────────────────────────────
 # When to use:
 #   Sparse, irregular, long-interval data (satellite revisits, sparse archives).
-#   All methods return the same residual-std uncertainty.  Sinusoid is fastest
-#   but assumes a fixed seasonal shape.  Spline makes the fewest assumptions.
+#   All methods return a spatially-varying sandwich std (lower in dense regions,
+#   higher in sparse regions).  Sinusoid is fastest but assumes a fixed seasonal
+#   shape.  Spline makes the fewest assumptions.
 
 println("\n── Figure 1: small n, all three methods ──")
 

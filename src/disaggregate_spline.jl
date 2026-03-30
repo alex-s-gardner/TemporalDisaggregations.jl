@@ -100,8 +100,8 @@ function disaggregate(m::Spline,
     λ      = m.smoothness * (norm(CWC) / n + 1e-10)
     _solve(A, b) = try A \ b catch e; e isa SingularException || rethrow(); pinv(A) * b end
     a      = _solve(CWC + λ * P, C_norm' * W_obs * y)   # L2 init (also final if loss_norm==:L2)
+    w_irls = ones(n)                                      # identity weights for L2; overwritten by L1
     if loss_norm == :L1
-        w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
             r     = y .- C_norm * a
             @. w_irls = 1.0 / (abs(r) + ε_irls)
@@ -126,7 +126,17 @@ function disaggregate(m::Spline,
 
     r       = y .- C_norm * a
     std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
-    std_vec = fill(std_val, length(eval_times))
+
+    # Sandwich variance: std varies with observation density.
+    # f(t*) = b(t*)' M_eff⁻¹ C_norm' W_eff y  →  Var(f(t*)) = σ̂² ‖√w_eff ⊙ C_norm v‖²
+    # where v = M_eff⁻¹ b(t*).  Batch over all output times simultaneously.
+    w_eff   = w_irls .* w_obs
+    M_eff   = C_norm' * Diagonal(w_eff) * C_norm + λ * P
+    B_out   = [bsplinebasis(dP_F, j, t) for t in eval_times, j in 1:n_basis]'  # [n_basis × n_out]
+    V       = _solve(M_eff, B_out)                                               # [n_basis × n_out]
+    CV      = C_norm * V                                                          # [n × n_out]
+    var_vec = std_val^2 .* vec(sum((sqrt.(w_eff) .* CV).^2, dims=1))
+    std_vec = sqrt.(var_vec)
 
     return DimStack(
         (signal = DimArray(values,  Ti(out_dates)),
