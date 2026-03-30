@@ -16,8 +16,14 @@ julia --project=test test/runtests.jl
 # Run a specific test block (from the REPL with package loaded)
 # include("test/runtests.jl")
 
-# Run the main end-to-end tutorial (generates 7 figures, requires CairoMakie, DimensionalData)
+# Run the main end-to-end tutorial (generates 8 figures, requires CairoMakie, DimensionalData)
 julia --project=examples examples/tutorial.jl
+
+# Run benchmarks (Spline / Sinusoid / GP at 1e4, 1e5, 1e6 observations)
+julia --project=. --threads=auto benchmarks/benchmark.jl
+
+# Build docs (requires DocumenterVitepress)
+julia --project=docs docs/make.jl
 ```
 
 **Requirements:** Julia ≥ 1.10. Test environment (`test/Project.toml`) adds only stdlib `Test`; the test file also imports `TemporalDisaggregations`, `DimensionalData`, `LinearAlgebra`, and `Statistics` from the main `Project.toml`. `CairoMakie` is in the main `Project.toml` but only used in `examples/`.
@@ -39,7 +45,7 @@ GP        <: DisaggregationMethod   # kernel, obs_noise, n_quad
 ```
 All use `@kwdef` with sensible defaults. `GP.kernel` is untyped (`Any`) because KernelFunctions.jl compositions produce deeply nested parametric types.
 
-**`yeardecimal(d)`** in `src/utils.jl` — converts a `Date` or `DateTime` to a decimal year (leap-year-aware). E.g. `yeardecimal(Date(2020, 7, 2)) ≈ 2020.5`.
+**`yeardecimal(d)`** — re-exported from `DateFormats.jl`; converts a `Date` or `DateTime` to a decimal year (leap-year-aware). E.g. `yeardecimal(Date(2020, 7, 2)) ≈ 2020.5`.
 
 **Time representation:** All interval boundaries are decimal years (e.g. `2020.5` = mid-2020).
 
@@ -63,7 +69,7 @@ DimStack(
 
 - `src/disaggregate_sinusoid.jl` — `disaggregate(m::Sinusoid, ...)`. Parametric model: mean + trend + per-year anomalies + annual sinusoid. Design matrix is constructed analytically (exact interval integrals, no quadrature); fastest method.
 
-- `src/disaggregate_gp.jl` — `disaggregate(m::GP, ...)`. Sparse inducing-point GP (DTC approximation); inducing grid is 2× finer than `output_period` (floored at `Day(1)`). Uses Gauss-Legendre quadrature (`FastGaussQuadrature`) to build the integral cross-kernel matrix via `Threads.@threads`. Matrix inversion lemma avoids forming the n×n observation covariance. Always krigs from the inducing grid to the output grid.
+- `src/disaggregate_gp.jl` — `disaggregate(m::GP, ...)`. Sparse inducing-point GP (DTC approximation); inducing grid is 2× finer than `output_period` (floored at `Day(1)`). Uses Gauss-Legendre quadrature (`FastGaussQuadrature`) to build the integral cross-kernel matrix via `Threads.@threads` (use `--threads=auto` for best performance). Matrix inversion lemma avoids forming the n×n observation covariance. Always krigs from the inducing grid to the output grid.
 
 **Shared L1/L2 loss:** All three methods implement optional L1 loss via IRLS (max 50 iterations, tolerance 1e-8 infinity-norm on relative weight change). `loss_norm` is a shared function kwarg.
 
@@ -74,7 +80,7 @@ When using `loss_norm = :L1`, computed from the final IRLS solution.
 
 ## Helper functions (`src/utils.jl`)
 
-- `yeardecimal(d)` — **exported**; `Date`/`DateTime` → decimal year, leap-year-aware.
+- `yeardecimal(d)` — **exported**; re-exported from `DateFormats`; `Date`/`DateTime` → decimal year, leap-year-aware.
 - `_date_grid(t_min, t_max, step; output_start)` — general grid generator with leap-year handling.
 - `_half_period(p)` — returns a period ≈ half the size of `p`, floored at `Day(1)`; used by the GP method to set inducing grid spacing at 2× the output resolution.
 - `_difference_matrix(m, r)` — builds the r-th order difference matrix for P-spline regularization.
