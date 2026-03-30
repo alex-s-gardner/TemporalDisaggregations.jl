@@ -24,8 +24,8 @@ result = disaggregate(Spline(), y, t1, t2)
 
 # Access results
 dates  = collect(dims(result.signal, Ti))   # Vector{Date}
-values = result[:signal].data   # Vector{Float64} — posterior mean
-stds   = result[:std].data      # Vector{Float64} — posterior std
+values = result[:signal].data   # Vector{Float64} — reconstructed signal
+stds   = result[:std].data      # Vector{Float64} — sandwich std (spatially-varying)
 ```
 
 ## Plotting
@@ -45,7 +45,7 @@ All methods return a `DimStack` with two layers:
 
 ```julia
 result[:signal]    # DimArray — instantaneous signal at each output time
-result[:std]       # DimArray — method-dependent standard deviation
+result[:std]       # DimArray — sandwich std (lower in dense regions, higher in sparse regions)
 ```
 
 ```julia

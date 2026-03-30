@@ -76,8 +76,9 @@ t_axis(r) = yeardecimal.(dims(r, Ti).val)
 # ─────────────────────────────────────────────────────────────────────────────
 # When to use:
 #   Sparse, irregular, long-interval data (satellite revisits, sparse archives).
-#   GP gives the most informative uncertainty.  Sinusoid is fastest but
-#   assumes a fixed seasonal shape.  Spline makes the fewest assumptions.
+#   All methods return a spatially-varying sandwich std (lower in dense regions,
+#   higher in sparse regions).  Sinusoid is fastest but assumes a fixed seasonal
+#   shape.  Spline makes the fewest assumptions.
 
 println("\n── Figure 1: small n, all three methods ──")
 
@@ -133,7 +134,7 @@ lines!(ax1c, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
 axislegend(ax1c; position = :lt, labelsize = 11)
 
 ax1d = Axis(fig1[2, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "GP — most meaningful uncertainty for sparse data")
+    title = "GP — flexible nonparametric reconstruction")
 band!(ax1d, t_out_s, gp_μ .- 2gp_σ, gp_μ .+ 2gp_σ;
     color = (:crimson, 0.2), label = "± 2σ")
 lines!(ax1d, t_out_s, gp_μ; color = :crimson, linewidth = 2.5,

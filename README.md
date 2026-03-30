@@ -67,7 +67,7 @@ result = disaggregate(Spline(
 ), y, t1, t2; loss_norm = :L2)
 ```
 
-**Uncertainty:** Constant `std` equal to the residual standard deviation of predicted vs. observed interval averages (`std(y .- ŷ)`). A single scalar that directly measures how well the fit reproduces the input data when re-integrated.
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![B-spline reconstruction](docs/images/spline_detail.png)
 
@@ -108,7 +108,7 @@ md[:trend]        # linear trend (units/year)
 md[:interannual]  # Dict{Int,Float64} of per-year anomalies
 ```
 
-**Uncertainty:** Constant `std` equal to the residual standard deviation of predicted vs. observed interval averages (`std(y .- ŷ)`). A single scalar that directly measures how well the parametric model reproduces the input data when re-integrated.
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![Sinusoid reconstruction](docs/images/sinusoid_detail.png)
 
@@ -129,7 +129,7 @@ result = disaggregate(GP(
 ), y, t1, t2)
 ```
 
-**Uncertainty:** Full GP posterior standard deviation — a true probabilistic credible interval given the chosen kernel.
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![GP posterior mean and 2σ band](docs/images/gp_detail.png)
 
@@ -174,15 +174,12 @@ Weights combine with `loss_norm = :L1`: the IRLS weights are multiplied element-
 
 ![Per-observation weights: unweighted vs weighted spline](docs/images/weights_detail.png)
 
-> Each method derives uncertainty differently, so `std` reflects the method's statistical framework rather than a universal measure of confidence:
->
-> | Method | What `std` measures | Key caveat |
-> |--------|---------------------|------------|
-> | **GP** | True Bayesian posterior standard deviation | Depends on your choice of kernel and `obs_noise` |
-> | **Spline** | Residual std of predicted vs. observed interval averages (constant across output grid) | Measures fit quality, not smoothness-level uncertainty |
-> | **Sinusoid** | Residual std of predicted vs. observed interval averages (constant across output grid) | Only meaningful if the parametric model fits the data well |
->
-> For Spline and Sinusoid, `std` is `std(y .- ŷ)` where `ŷ` is the fitted model re-integrated over each observation interval. When using `loss_norm = :L1`, this residual std is computed from the final IRLS solution.
+> All three methods return the same type of `std`: a spatially-varying sandwich standard
+> deviation `std(t*) = σ̂ · sqrt(q(t*))`, where `σ̂` is the weighted residual RMS of
+> predicted vs. observed interval averages and `q(t*)` is a dimensionless coverage factor.
+> `std` is lower where observations are dense and higher where they are sparse — giving an
+> intuitive picture of estimation reliability across the output timeline. When using
+> `loss_norm = :L1`, both quantities are computed from the final IRLS solution.
 
 ## Return Type
 
@@ -190,7 +187,7 @@ All methods return a `DimStack` (from [DimensionalData.jl](https://github.com/ra
 
 ```julia
 result[:signal]    # DimArray — instantaneous signal value at a point in time (Ti)
-result[:std]       # DimArray — method dependent standard deviation at a point in time (Ti)
+result[:std]       # DimArray — sandwich std (lower in dense regions, higher in sparse regions)
 ```
 
 DimStacks provide an intuitive summary when displayed in the REPL:

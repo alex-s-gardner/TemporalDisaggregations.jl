@@ -14,7 +14,7 @@ result = disaggregate(Spline(
 ), y, t1, t2; loss_norm = :L2)
 ```
 
-**Uncertainty:** Confidence band derived from how strongly regularisation constrains the fit.
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![B-spline reconstruction](./assets/spline_detail.png)
 
@@ -55,7 +55,7 @@ md[:trend]        # linear trend (units/year)
 md[:interannual]  # Dict{Int,Float64} of per-year anomalies
 ```
 
-**Uncertainty:** Propagated from fitted model coefficients via weighted least squares.
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![Sinusoid reconstruction](./assets/sinusoid_detail.png)
 
@@ -76,19 +76,25 @@ result = disaggregate(GP(
 ), y, t1, t2)
 ```
 
-**Uncertainty:** Full GP posterior standard deviation — a true probabilistic credible interval given the chosen kernel.
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![GP posterior mean and 2σ band](./assets/gp_detail.png)
 
-## Uncertainty Comparison
+## Uncertainty
 
-!!! warning
-    `std` values are not directly comparable across methods. Each method derives uncertainty differently:
+All three methods return the same type of `std` — a spatially-varying sandwich standard deviation:
 
-| Method | What `std` measures | Key caveat |
-|--------|---------------------|------------|
-| **GP** | True Bayesian uncertainty from the GP model | Depends on your choice of kernel and `obs_noise` |
-| **Spline** | How strongly regularisation constrains the fit | Controlled by `smoothness`; does not account for uncertainty in the smoothness level itself |
-| **Sinusoid** | Uncertainty in the fitted seasonal parameters | Only valid if the true signal is well-described by mean + trend + sinusoid |
+```
+std(t*) = σ̂ · sqrt(q(t*))
+```
 
-When using `loss_norm = :L1`, `std` is approximate — computed from the final reweighted system, not from L1 theory.
+where `σ̂` is the weighted residual RMS of predicted vs. observed interval averages
+(`sqrt(Σ wᵢ rᵢ² / Σ wᵢ)`, with `rᵢ = yᵢ − ŷᵢ`) and `q(t*)` is a dimensionless
+coverage factor derived from the method's hat vector at time `t*`:
+
+- **Dense observation coverage** → `q(t*) < 1` → `std(t*) < σ̂`
+- **Sparse observation coverage** → `q(t*) > 1` → `std(t*) > σ̂`
+
+This makes `std` comparable across methods and automatically reflects the temporal
+distribution of the input observations. When using `loss_norm = :L1`, both `σ̂` and
+`q(t*)` are computed from the final IRLS solution.

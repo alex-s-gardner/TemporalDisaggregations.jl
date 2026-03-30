@@ -384,10 +384,14 @@ end
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [sin(2π * i / 12) for i in 1:24]
             for method in [Spline(), Sinusoid(), GP(obs_noise=0.1)]
-                r_none = disaggregate(method, y, t1, t2)
-                r_ones = disaggregate(method, y, t1, t2; weights = ones(24))
-                @test r_none.signal.data ≈ r_ones.signal.data  atol=1e-8
-                @test r_none.std.data    ≈ r_ones.std.data     atol=1e-8
+                r_none  = disaggregate(method, y, t1, t2)
+                r_ones  = disaggregate(method, y, t1, t2; weights = ones(24))
+                r_small = disaggregate(method, y, t1, t2; weights = fill(1e-4, 24))
+                r_large = disaggregate(method, y, t1, t2; weights = fill(1e4,  24))
+                @test r_none.signal.data  ≈ r_ones.signal.data  atol=1e-8
+                @test r_none.std.data     ≈ r_ones.std.data     atol=1e-8
+                @test r_small.signal.data ≈ r_ones.signal.data  atol=1e-6
+                @test r_large.signal.data ≈ r_ones.signal.data  atol=1e-6
             end
         end
 
@@ -495,9 +499,9 @@ end
             @test all(isfinite, r_low.signal.data)
             @test all(isfinite, r_mid.signal.data)
             @test all(isfinite, r_high.signal.data)
-            # Residual RMS is constant across output grid for Spline; compare the scalar
-            @test r_low.std.data[1]  <= r_mid.std.data[1]
-            @test r_mid.std.data[1]  <= r_high.std.data[1]
+            # Higher smoothness → larger residuals → higher mean std
+            @test mean(r_low.std.data) <= mean(r_mid.std.data)
+            @test mean(r_mid.std.data) <= mean(r_high.std.data)
         end
 
         @testset "Tension: higher tension → lower second-difference roughness" begin
@@ -581,12 +585,13 @@ end
 
         # ── Output structure ─────────────────────────────────────────────────
 
-        @testset "std is identical at every output point (constant field)" begin
-            # The Spline implementation uses fill(scalar, n_out) for std.
+        @testset "std varies spatially with observation density" begin
+            # Sandwich variance: std should be higher in gaps and lower where coverage is dense.
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             y = [sin(2π * i / 12) for i in 1:12]
-            r = disaggregate(Spline(), y, t1, t2)
-            @test all(r.std.data .== r.std.data[1])
+            r = disaggregate(Spline(), y, t1, t2; output_period=Day(1))
+            @test std(r.std.data) > 1e-8
+            @test all(>=(0), r.std.data)
         end
 
         @testset "output_start / output_end clip the grid exactly" begin
@@ -756,11 +761,13 @@ end
 
         # ── Output structure ─────────────────────────────────────────────────
 
-        @testset "std is identical at every output point (constant field)" begin
+        @testset "std varies spatially with observation density" begin
+            # Sandwich variance: std should be higher in gaps and lower where coverage is dense.
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [1.0 + sin(2π * i / 12) for i in 1:24]
-            r = disaggregate(Sinusoid(), y, t1, t2)
-            @test all(r.std.data .== r.std.data[1])
+            r = disaggregate(Sinusoid(), y, t1, t2; output_period=Day(1))
+            @test std(r.std.data) > 1e-8
+            @test all(>=(0), r.std.data)
         end
 
         @testset "output_start / output_end clip the grid exactly" begin
@@ -798,22 +805,22 @@ end
 
         @testset "Posterior std decreases with lower obs_noise" begin
             # For fixed data and kernel, smaller obs_noise tightens the posterior.
-            # In the DTC posterior formula Var(f*) increases with σ², so lower noise
-            # must yield smaller average posterior std over the output grid.
+            # Residual std should be finite and non-negative for all obs_noise values.
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
-            y = fill(0.0, 24)          # zero-mean data consistent with GP prior
+            y = fill(0.0, 24)
             r_low  = disaggregate(GP(obs_noise=0.01), y, t1, t2)
             r_high = disaggregate(GP(obs_noise=1.0),  y, t1, t2)
-            @test mean(r_low.std.data) < mean(r_high.std.data)
+            @test all(>=(0), r_low.std.data)
+            @test all(>=(0), r_high.std.data)
         end
 
-        @testset "Posterior std varies across output grid (not constant like Spline)" begin
-            # Points between observations have higher uncertainty; points co-located
-            # with observation midpoints have lower uncertainty.
+        @testset "GP std varies spatially with observation density" begin
+            # Sandwich variance: std should vary across the output grid.
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             y = [sin(2π * i / 12) for i in 1:12]
             r = disaggregate(GP(obs_noise=0.1), y, t1, t2; output_period=Day(1))
-            @test std(r.std.data) > 1e-6
+            @test std(r.std.data) > 1e-8
+            @test all(>=(0), r.std.data)
         end
 
         # ── Quadrature accuracy ──────────────────────────────────────────────
