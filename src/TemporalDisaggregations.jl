@@ -16,6 +16,7 @@ module TemporalDisaggregations
     include("disaggregate_sinusoid.jl")
     include("disaggregate_gp.jl")
     include("disaggregate.jl")
+    include("precompile.jl")
 
     export disaggregate, yeardecimal,
         DisaggregationMethod, Spline, Sinusoid, GP,

@@ -52,7 +52,7 @@ function disaggregate(m::GP,
     gl_nodes, gl_weights = gausslegendre(m.n_quad)
     w = gl_weights ./ 2
 
-    # ── Integral cross-kernel C [n × m] ───────────────────────────────────────
+    # ── Integral cross-kernel C [n × n_ind] ───────────────────────────────────
     # C[i, k] = (1/Δtᵢ) ∫_{t1ᵢ}^{t2ᵢ} k(t, Z[k]) dt  ≈  w' K(tq_i, Z)
     C = Matrix{Float64}(undef, n, n_ind)
     Threads.@threads for i in 1:n
@@ -62,36 +62,47 @@ function disaggregate(m::GP,
         C[i, :] = kernelmatrix(m.kernel, tq, Z)' * w
     end
 
-    # ── Kernel matrix at inducing points K [m × m] ───────────────────────────
-    K_raw = kernelmatrix(m.kernel, Z, Z)
+    # ── Kernel matrix at inducing points K [n_ind × n_ind] ───────────────────
+    K_raw  = kernelmatrix(m.kernel, Z, Z)
     jitter = 1e-6 * tr(K_raw) / n_ind
-    K = Symmetric(K_raw + jitter * I)
+    K_jit  = K_raw + jitter * I              # plain Matrix, includes jitter; reused for M_W
+    K      = Symmetric(K_jit)
 
     # ── Sparse GP posterior via matrix inversion lemma ────────────────────────
     # Σ_y = C K⁻¹ Cᵀ + σ²I  [n × n, never formed]
     # Woodbury: Σ_y⁻¹ = I/σ² − C M'⁻¹ Cᵀ / σ²   where M' = K σ² + CᵀWC
+    #
+    # Row-scaled syrk: C_w = √w_obs ⊙ C → S_W = C_w'C_w = C' Diag(w_obs) C
+    # avoids the n_ind×n intermediate from C' * Diagonal(w_obs) * C (~1.94 GB at n=1e5).
+    sqrt_w_obs = sqrt.(w_obs)
+    C_w        = sqrt_w_obs .* C              # [n × n_ind]
+    S_W        = C_w' * C_w                  # [n_ind × n_ind] via BLAS syrk
+    CtWy       = C_w' * (sqrt_w_obs .* y)    # [n_ind]
 
-    W_obs  = Diagonal(w_obs)
-    S_W    = C' * W_obs * C                  # [m × m]  (updated by IRLS for L1)
-    M_W    = Symmetric(K .* σ² .+ S_W)       # [m × m]
-    L_M    = cholesky(M_W)
+    # In-place M_W construction avoids K.*σ² temporary; M_W_buf reused in L1 loop.
+    M_W_buf    = K_jit .* σ²
+    M_W_buf  .+= S_W
+    M_W        = Symmetric(M_W_buf)
+    L_M        = cholesky(M_W)
 
-    CtWy   = C' * W_obs * y                  # [m]
-    v      = L_M \ CtWy                      # M'⁻¹ CᵀWy  [m]
-    μ_Z    = (CtWy .- S_W * v) ./ σ²         # [m]
+    v      = L_M \ CtWy                      # M'⁻¹ CᵀWy  [n_ind]
+    μ_Z    = (CtWy .- S_W * v) ./ σ²         # [n_ind]
 
     # ── L1: IRLS refinement (skipped for :L2) ─────────────────────────────────
     # Replace W=W_obs with combined weights w_irls[i]*w_obs[i], iterate to convergence.
     # Predicted interval averages are C*v (Woodbury intermediate), not C*μ_Z.
+    # Pre-allocate C_w_eff and M_W_buf outside loop to avoid per-iteration allocation.
     w_irls = ones(n)                          # identity for L2; overwritten by L1
     if loss_norm == :L1
-        ε_irls = 1e-6 * (std(y) + 1e-10)
+        ε_irls  = 1e-6 * (std(y) + 1e-10)
+        C_w_eff = similar(C)                  # [n × n_ind], reused each iteration
         for _ in 1:50
-            W_eff      = Diagonal(w_irls .* w_obs)
-            S_W        = C' * W_eff * C
-            M_W        = Symmetric(K .* σ² .+ S_W)
+            @. C_w_eff = sqrt(w_irls * w_obs) * C
+            S_W        = C_w_eff' * C_w_eff   # syrk
+            @. M_W_buf = K_jit * σ² + S_W
+            M_W        = Symmetric(M_W_buf)
             L_M        = cholesky(M_W)
-            CtWy       = C' * W_eff * y
+            CtWy       = C_w_eff' * (@. sqrt(w_irls * w_obs) * y)
             v          = L_M \ CtWy
             μ_Z_new    = (CtWy .- S_W * v) ./ σ²
             r          = y .- C * v
@@ -110,14 +121,14 @@ function disaggregate(m::GP,
     std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
 
     # Sandwich variance: std varies with observation density.
-    # μ_out(t*) = k(t*,Z) M_W⁻¹ C' W_eff y  →  Var = σ̂² ‖√w_eff ⊙ C u‖²
-    # where u = M_W⁻¹ k(Z,t*).  Batch: U = M_W⁻¹ K_out_Z^T via two triangular solves.
-    w_eff   = w_irls .* w_obs
-    R_out   = L_M \ K_out_Z'          # L_M⁻¹ K_out_Z^T  [n_ind × n_out]
-    U       = L_M' \ R_out            # M_W⁻¹ K_out_Z^T  [n_ind × n_out]
-    CU      = C * U                   # [n × n_out]
-    var_vec = std_val^2 .* vec(sum((sqrt.(w_eff) .* CU).^2, dims=1))
-    std_vec = sqrt.(var_vec)
+    # μ_out(t*) = k(t*,Z) M_W⁻¹ C' W_eff y  →  Var = σ̂² u' S_W u
+    # where u = M_W⁻¹ k(Z,t*) and S_W = C' Diag(w_eff) C (already computed, consistent with L_M).
+    # Identity: ‖√w_eff ⊙ C u‖² = u' S_W u = (S_W U)[:,k] · U[:,k]
+    # Replaces n×n_out matrix C*U (~832 MB at n=1e5) with n_ind×n_out S_W*U (~20 MB).
+    U       = L_M \ K_out_Z'                 # M_W⁻¹ K_out_Z^T  [n_ind × n_out]
+    S_W_U   = S_W * U                        # [n_ind × n_out]
+    var_vec = std_val^2 .* vec(sum(S_W_U .* U, dims=1))
+    std_vec = sqrt.(max.(0.0, var_vec))
 
     return DimStack(
         (signal = DimArray(μ_out,    Ti(out_dates)),
