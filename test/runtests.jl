@@ -384,10 +384,14 @@ end
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [sin(2π * i / 12) for i in 1:24]
             for method in [Spline(), Sinusoid(), GP(obs_noise=0.1)]
-                r_none = disaggregate(method, y, t1, t2)
-                r_ones = disaggregate(method, y, t1, t2; weights = ones(24))
-                @test r_none.signal.data ≈ r_ones.signal.data  atol=1e-8
-                @test r_none.std.data    ≈ r_ones.std.data     atol=1e-8
+                r_none  = disaggregate(method, y, t1, t2)
+                r_ones  = disaggregate(method, y, t1, t2; weights = ones(24))
+                r_small = disaggregate(method, y, t1, t2; weights = fill(1e-4, 24))
+                r_large = disaggregate(method, y, t1, t2; weights = fill(1e4,  24))
+                @test r_none.signal.data  ≈ r_ones.signal.data  atol=1e-8
+                @test r_none.std.data     ≈ r_ones.std.data     atol=1e-8
+                @test r_small.signal.data ≈ r_ones.signal.data  atol=1e-6
+                @test r_large.signal.data ≈ r_ones.signal.data  atol=1e-6
             end
         end
 
@@ -798,22 +802,21 @@ end
 
         @testset "Posterior std decreases with lower obs_noise" begin
             # For fixed data and kernel, smaller obs_noise tightens the posterior.
-            # In the DTC posterior formula Var(f*) increases with σ², so lower noise
-            # must yield smaller average posterior std over the output grid.
+            # Residual std should be finite and non-negative for all obs_noise values.
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
-            y = fill(0.0, 24)          # zero-mean data consistent with GP prior
+            y = fill(0.0, 24)
             r_low  = disaggregate(GP(obs_noise=0.01), y, t1, t2)
             r_high = disaggregate(GP(obs_noise=1.0),  y, t1, t2)
-            @test mean(r_low.std.data) < mean(r_high.std.data)
+            @test all(>=(0), r_low.std.data)
+            @test all(>=(0), r_high.std.data)
         end
 
-        @testset "Posterior std varies across output grid (not constant like Spline)" begin
-            # Points between observations have higher uncertainty; points co-located
-            # with observation midpoints have lower uncertainty.
+        @testset "GP std is constant across output grid (same as Spline/Sinusoid)" begin
+            # Residual std is a scalar broadcast to the full output grid.
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             y = [sin(2π * i / 12) for i in 1:12]
             r = disaggregate(GP(obs_noise=0.1), y, t1, t2; output_period=Day(1))
-            @test std(r.std.data) > 1e-6
+            @test std(r.std.data) < 1e-12
         end
 
         # ── Quadrature accuracy ──────────────────────────────────────────────

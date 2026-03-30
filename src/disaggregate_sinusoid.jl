@@ -62,6 +62,7 @@ function disaggregate(m::Sinusoid,
     t2    = yeardecimal.(interval_end[order])
     y     = Float64.(aggregate_values[order])
     w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+    w_obs ./= mean(w_obs)
 
     # ── Parameter layout ──────────────────────────────────────────────────────
     # θ = [μ,  β,  γ_yr1, …, γ_yrK,  A,  B]

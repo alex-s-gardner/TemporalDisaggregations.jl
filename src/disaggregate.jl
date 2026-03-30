@@ -23,9 +23,8 @@ Reconstruct an instantaneous time series from interval-averaged observations.
 
 # Returns
 `DimStack` with `:signal` and `:std` layers indexed by `Ti(dates)`.
-For `GP`, `:std` is the Bayesian posterior standard deviation. For `Spline` and `Sinusoid`,
-`:std` is a constant across the output grid equal to the residual standard deviation of
-predicted vs. observed interval averages (`std(y .- ŷ)`).
+For all methods, `:std` is constant across the output grid and equals the weighted residual
+standard deviation of predicted vs. observed interval averages (`std(y .- ŷ)`).
 
 # Examples
 ```julia

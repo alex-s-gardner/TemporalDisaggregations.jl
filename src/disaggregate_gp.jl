@@ -33,6 +33,7 @@ function disaggregate(m::GP,
     t2    = yeardecimal.(interval_end[order])
     y     = Array(aggregate_values[order])
     w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+    w_obs ./= mean(w_obs)
 
     # ── Inducing grid: 2× finer than output, floored at Day(1) ───────────────────
     inducing_period = _half_period(output_period)
@@ -101,15 +102,17 @@ function disaggregate(m::GP,
     end
 
     # ── Kriging from inducing to output grid ──────────────────────────────────────
-    K_out_Z      = kernelmatrix(m.kernel, Z_out, Z)
-    L_K          = cholesky(K)
-    μ_out        = K_out_Z * (L_K \ μ_Z)
-    R_out        = L_M \ K_out_Z'
-    K_diag_out   = kernelmatrix_diag(m.kernel, Z_out)
-    post_var_out = K_diag_out .- dropdims(sum(K_out_Z .* R_out', dims=2), dims=2)
+    K_out_Z = kernelmatrix(m.kernel, Z_out, Z)
+    L_K     = cholesky(K)
+    μ_out   = K_out_Z * (L_K \ μ_Z)
+
+    r       = y .- C * v
+    std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
+    std_vec = fill(std_val, length(out_dates))
+
     return DimStack(
-        (signal = DimArray(μ_out,                          Ti(out_dates)),
-         std    = DimArray(sqrt.(max.(0.0, post_var_out)), Ti(out_dates)));
+        (signal = DimArray(μ_out,    Ti(out_dates)),
+         std    = DimArray(std_vec,  Ti(out_dates)));
         metadata = Dict(
             :method        => :gp,
             :kernel        => m.kernel,

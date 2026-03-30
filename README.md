@@ -129,7 +129,7 @@ result = disaggregate(GP(
 ), y, t1, t2)
 ```
 
-**Uncertainty:** Full GP posterior standard deviation — a true probabilistic credible interval given the chosen kernel.
+**Uncertainty:** Residual standard deviation of predicted vs. observed interval averages (constant across output grid).
 
 ![GP posterior mean and 2σ band](docs/images/gp_detail.png)
 
@@ -174,15 +174,11 @@ Weights combine with `loss_norm = :L1`: the IRLS weights are multiplied element-
 
 ![Per-observation weights: unweighted vs weighted spline](docs/images/weights_detail.png)
 
-> Each method derives uncertainty differently, so `std` reflects the method's statistical framework rather than a universal measure of confidence:
->
-> | Method | What `std` measures | Key caveat |
-> |--------|---------------------|------------|
-> | **GP** | True Bayesian posterior standard deviation | Depends on your choice of kernel and `obs_noise` |
-> | **Spline** | Residual std of predicted vs. observed interval averages (constant across output grid) | Measures fit quality, not smoothness-level uncertainty |
-> | **Sinusoid** | Residual std of predicted vs. observed interval averages (constant across output grid) | Only meaningful if the parametric model fits the data well |
->
-> For Spline and Sinusoid, `std` is `std(y .- ŷ)` where `ŷ` is the fitted model re-integrated over each observation interval. When using `loss_norm = :L1`, this residual std is computed from the final IRLS solution.
+> All three methods return the same type of `std`: the weighted residual standard deviation
+> `sqrt(Σ wᵢ rᵢ² / Σ wᵢ)` where `rᵢ = yᵢ − ŷᵢ` (observed minus fitted interval average).
+> This value is constant across the output grid and directly measures how well the model
+> reproduces the input observations. When using `loss_norm = :L1`, `std` is computed from
+> the final IRLS solution.
 
 ## Return Type
 

@@ -14,7 +14,7 @@ result = disaggregate(Spline(
 ), y, t1, t2; loss_norm = :L2)
 ```
 
-**Uncertainty:** Confidence band derived from how strongly regularisation constrains the fit.
+**Uncertainty:** Residual standard deviation of predicted vs. observed interval averages (constant across output grid).
 
 ![B-spline reconstruction](./assets/spline_detail.png)
 
@@ -55,7 +55,7 @@ md[:trend]        # linear trend (units/year)
 md[:interannual]  # Dict{Int,Float64} of per-year anomalies
 ```
 
-**Uncertainty:** Propagated from fitted model coefficients via weighted least squares.
+**Uncertainty:** Residual standard deviation of predicted vs. observed interval averages (constant across output grid).
 
 ![Sinusoid reconstruction](./assets/sinusoid_detail.png)
 
@@ -76,19 +76,15 @@ result = disaggregate(GP(
 ), y, t1, t2)
 ```
 
-**Uncertainty:** Full GP posterior standard deviation — a true probabilistic credible interval given the chosen kernel.
+**Uncertainty:** Residual standard deviation of predicted vs. observed interval averages — the same measure used by Spline and Sinusoid.
 
 ![GP posterior mean and 2σ band](./assets/gp_detail.png)
 
-## Uncertainty Comparison
+## Uncertainty
 
-!!! warning
-    `std` values are not directly comparable across methods. Each method derives uncertainty differently:
+All three methods return the same type of `std`: the weighted residual standard deviation
+`sqrt(Σ wᵢ rᵢ² / Σ wᵢ)` where `rᵢ = yᵢ − ŷᵢ` (observed minus fitted interval average).
+This value is constant across the output grid and directly measures how well the model
+reproduces the input observations — making it comparable across methods.
 
-| Method | What `std` measures | Key caveat |
-|--------|---------------------|------------|
-| **GP** | True Bayesian uncertainty from the GP model | Depends on your choice of kernel and `obs_noise` |
-| **Spline** | How strongly regularisation constrains the fit | Controlled by `smoothness`; does not account for uncertainty in the smoothness level itself |
-| **Sinusoid** | Uncertainty in the fitted seasonal parameters | Only valid if the true signal is well-described by mean + trend + sinusoid |
-
-When using `loss_norm = :L1`, `std` is approximate — computed from the final reweighted system, not from L1 theory.
+When using `loss_norm = :L1`, `std` is computed from the final IRLS solution.

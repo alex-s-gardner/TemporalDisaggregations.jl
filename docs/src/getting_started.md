@@ -24,8 +24,8 @@ result = disaggregate(Spline(), y, t1, t2)
 
 # Access results
 dates  = collect(dims(result.signal, Ti))   # Vector{Date}
-values = result[:signal].data   # Vector{Float64} — posterior mean
-stds   = result[:std].data      # Vector{Float64} — posterior std
+values = result[:signal].data   # Vector{Float64} — reconstructed signal
+stds   = result[:std].data      # Vector{Float64} — residual std (constant)
 ```
 
 ## Plotting

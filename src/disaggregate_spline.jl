@@ -34,6 +34,7 @@ function disaggregate(m::Spline,
     t2    = yeardecimal.(interval_end[order])
     y     = aggregate_values[order]
     w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+    w_obs ./= mean(w_obs)
 
     # Quartic (p=4) B-spline space for F(t); x(t) = F′(t) is cubic.
     # Knot placement is the primary control over smoothness:
@@ -97,7 +98,8 @@ function disaggregate(m::Spline,
     W_obs  = Diagonal(w_obs)
     CWC    = C_norm' * W_obs * C_norm
     λ      = m.smoothness * (norm(CWC) / n + 1e-10)
-    a      = (CWC + λ * P) \ (C_norm' * W_obs * y)   # L2 init (also final if loss_norm==:L2)
+    _solve(A, b) = try A \ b catch e; e isa SingularException || rethrow(); pinv(A) * b end
+    a      = _solve(CWC + λ * P, C_norm' * W_obs * y)   # L2 init (also final if loss_norm==:L2)
     if loss_norm == :L1
         w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
@@ -105,7 +107,7 @@ function disaggregate(m::Spline,
             @. w_irls = 1.0 / (abs(r) + ε_irls)
             W_eff  = Diagonal(w_irls .* w_obs)
             CWC_e  = C_norm' * W_eff * C_norm
-            a_new  = (CWC_e + λ * P) \ (C_norm' * W_eff * y)
+            a_new  = _solve(CWC_e + λ * P, C_norm' * W_eff * y)
             _irls_converged(a_new, a) && (a = a_new; break)
             a = a_new
         end
