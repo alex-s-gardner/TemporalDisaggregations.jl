@@ -102,24 +102,39 @@ function disaggregate(m::Spline,
     # λ scaled by ‖C'C‖/n so `smoothness` is dimensionless.
     # C_w = √w_obs ⊙ C_norm so that C_w'C_w = C_norm' Diag(w_obs) C_norm
     # via BLAS syrk (A'A path) — avoids the n_basis×n intermediate from C_norm'*Diag*C_norm.
-    ε_irls    = 1e-6 * (std(y) + 1e-10)
-    sqrt_w_obs = sqrt.(w_obs)
-    C_w        = sqrt_w_obs .* C_norm
-    CWC        = C_w' * C_w
-    λ          = m.smoothness * (norm(CWC) / n + 1e-10)
-    a          = _spline_solve(CWC + λ * P, C_norm' * (w_obs .* y))
-    w_irls     = ones(n)                    # identity for L2; overwritten by L1
+    ε_irls = 1e-6 * (std(y) + 1e-10)
+    C_w    = sqrt.(w_obs) .* C_norm
+    CWC    = C_w' * C_w
+    λ      = m.smoothness * (norm(CWC) / n + 1e-10)
+    a      = _spline_solve(CWC + λ * P, C_norm' * (w_obs .* y))
+    w_irls = ones(n)                        # identity for L2; overwritten by L1
+
+    # Pre-allocate residual; computed once for L2, updated each IRLS iteration for L1.
+    r = Vector{Float64}(undef, n)
     if loss_norm == :L1
+        # Pre-allocate IRLS buffers outside the loop — mirrors GP method pattern.
+        w_eff_i  = similar(w_obs)
+        C_w_eff  = similar(C_norm)
+        CWC_e    = Matrix{Float64}(undef, n_basis, n_basis)
+        A_irls   = Matrix{Float64}(undef, n_basis, n_basis)
+        w_eff_y  = similar(y)
+        rhs_irls = Vector{Float64}(undef, n_basis)
+        mul!(r, C_norm, a); @. r = y - r
         for _ in 1:50
-            r        = y .- C_norm * a
-            @. w_irls = 1.0 / (abs(r) + ε_irls)
-            w_eff_i  = w_irls .* w_obs
-            C_w_i    = sqrt.(w_eff_i) .* C_norm
-            CWC_e    = C_w_i' * C_w_i
-            a_new    = _spline_solve(CWC_e + λ * P, C_norm' * (w_eff_i .* y))
+            @. w_irls  = 1.0 / (abs(r) + ε_irls)
+            @. w_eff_i = w_irls * w_obs
+            @. C_w_eff = sqrt(w_eff_i) * C_norm   # row-broadcast: (n,) × (n,n_basis)
+            mul!(CWC_e, C_w_eff', C_w_eff)
+            @. A_irls  = CWC_e + λ * P
+            @. w_eff_y = w_eff_i * y
+            mul!(rhs_irls, C_norm', w_eff_y)
+            a_new = _spline_solve(A_irls, rhs_irls)
+            mul!(r, C_norm, a_new); @. r = y - r
             _irls_converged(a_new, a) && (a = a_new; break)
             a = a_new
         end
+    else
+        mul!(r, C_norm, a); @. r = y - r
     end
 
     # Instantaneous signal: x(t) = F′(t) = Σⱼ aⱼ B′ⱼ(t)
@@ -134,22 +149,32 @@ function disaggregate(m::Spline,
     eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
 
     B_out  = [bsplinebasis(dP_F, j, t) for j in 1:n_basis, t in eval_times]  # [n_basis × n_out]
-    values = vec(B_out' * a)                                                    # [n_out]
+    values = Vector{Float64}(undef, length(eval_times))
+    mul!(values, B_out', a)
 
-    r       = y .- C_norm * a
     std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
 
     # Sandwich variance: std varies with observation density.
     # f(t*) = b(t*)' M_eff⁻¹ C_norm' W_eff y  →  Var(f(t*)) = σ̂² v' (C_norm' W_eff C_norm) v
     # where v = M_eff⁻¹ b(t*).  We exploit C_norm' W_eff C_norm = M_eff − λP = CWC_eff to
     # compute q_vec[k] = (CWC_eff V[:,k]) · V[:,k] without forming the n×n_out matrix C_norm*V.
-    w_eff    = w_irls .* w_obs
-    C_we     = sqrt.(w_eff) .* C_norm
-    CWC_eff  = C_we' * C_we                    # C_norm' Diag(w_eff) C_norm  [n_basis × n_basis]
+    # For L2, reuse C_w/CWC (w_irls=ones so w_eff=w_obs); for L1 use the IRLS final weights.
+    if loss_norm == :L2
+        CWC_eff = CWC
+    else
+        @. w_eff_i  = w_irls * w_obs
+        @. C_w_eff  = sqrt(w_eff_i) * C_norm
+        mul!(CWC_e, C_w_eff', C_w_eff)
+        CWC_eff = CWC_e
+    end
     M_eff    = CWC_eff + λ * P
     V        = _spline_solve(M_eff, B_out)     # [n_basis × n_out]
     M_data_V = CWC_eff * V                     # [n_basis × n_out] — avoids n×n_out allocation
-    q_vec    = max.(0.0, vec(sum(M_data_V .* V, dims=1)))  # clamp: PSD in theory, ±ε in practice
+    n_out_v  = size(V, 2)
+    q_vec    = Vector{Float64}(undef, n_out_v)
+    for k in 1:n_out_v                         # column-dot avoids n_basis×n_out temporary
+        q_vec[k] = max(0.0, dot(view(M_data_V, :, k), view(V, :, k)))
+    end
     q_mean   = mean(q_vec)
     std_vec  = q_mean > 1e-10 ? std_val .* sqrt.(q_vec ./ q_mean) : fill(std_val, length(q_vec))
 
