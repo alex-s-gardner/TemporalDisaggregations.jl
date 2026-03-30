@@ -64,7 +64,7 @@ linesegments!(ax1, vcat(collect(zip(pt1, pt2))...);
 lines!(ax1, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True instantaneous signal")
 
 band!(ax1, t_output, gp_μ .- 2 .* gp_σ, gp_μ .+ 2 .* gp_σ; color = (:crimson, 0.15))
-lines!(ax1, t_output, gp_μ;  color = :crimson,   linewidth = 2.5, label = "GP (mean ± 2σ)")
+lines!(ax1, t_output, gp_μ;  color = :crimson,   linewidth = 2.5, label = "GP mean")
 lines!(ax1, t_output, sp_μ;  color = :steelblue, linewidth = 2.5, linestyle = :dash, label = "B-spline")
 lines!(ax1, t_output, sin_μ; color = :darkorange, linewidth = 2.5, linestyle = :dot,  label = "Sinusoid")
 
@@ -83,7 +83,7 @@ lines!(ax2a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax2a; position = :lt, framevisible = true, labelsize = 11)
 
 ax2b = Axis(fig2[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: GP posterior mean ± 2σ")
+    title = "Output: GP mean ± 2·sandwich std")
 band!(ax2b, t_output, gp_μ .- 2 .* gp_σ, gp_μ .+ 2 .* gp_σ;
     color = (:crimson, 0.2), label = "± 2σ")
 lines!(ax2b, t_output, gp_μ; color = :crimson, linewidth = 2.5, label = "Posterior mean")
@@ -114,7 +114,7 @@ lines!(ax3a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax3a; position = :lt, framevisible = true, labelsize = 11)
 
 ax3b = Axis(fig3[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: B-spline mean ± 2·std(residuals)")
+    title = "Output: B-spline mean ± 2·sandwich std")
 band!(ax3b, t_output, sp_μ .- 2 .* sp_std, sp_μ .+ 2 .* sp_std;
     color = (:steelblue, 0.2), label = "± 2σ")
 lines!(ax3b, t_output, sp_μ; color = :steelblue, linewidth = 2.5, label = "B-spline mean")
@@ -135,7 +135,7 @@ lines!(ax4a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax4a; position = :lt, framevisible = true, labelsize = 11)
 
 ax4b = Axis(fig4[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: tension-spline mean ± 2·std(residuals)  (tension = 25)")
+    title = "Output: tension-spline mean ± 2·sandwich std  (tension = 25)")
 band!(ax4b, t_output, ten_μ .- 2 .* ten_std, ten_μ .+ 2 .* ten_std;
     color = (:purple, 0.2), label = "± 2σ")
 lines!(ax4b, t_output, ten_μ; color = :purple, linewidth = 2.5, label = "Tension-spline mean")
@@ -156,7 +156,7 @@ lines!(ax5a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "
 axislegend(ax5a; position = :lt, framevisible = true, labelsize = 11)
 
 ax5b = Axis(fig5[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Output: sinusoid mean ± 2·std(residuals)")
+    title = "Output: sinusoid mean ± 2·sandwich std")
 band!(ax5b, t_output, sin_μ .- 2 .* sin_std, sin_μ .+ 2 .* sin_std;
     color = (:darkorange, 0.2), label = "± 2σ")
 lines!(ax5b, t_output, sin_μ; color = :darkorange, linewidth = 2.5, label = "Sinusoid mean")

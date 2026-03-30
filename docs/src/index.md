@@ -18,7 +18,7 @@ features:
   - title: Three Methods
     details: B-spline, sinusoid, and Gaussian Process — all sharing the same interface. Switch by passing a different algorithm struct.
   - title: Uncertainty Estimates
-    details: Every method returns posterior standard deviations alongside the reconstructed signal.
+    details: Every method returns a spatially-varying sandwich std alongside the reconstructed signal — lower where observations are dense, higher where they are sparse.
   - title: Robust to Outliers
     details: All methods support L1 loss via IRLS, automatically down-weighting suspicious observations.
 ---

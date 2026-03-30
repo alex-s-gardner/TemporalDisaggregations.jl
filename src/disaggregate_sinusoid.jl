@@ -98,8 +98,8 @@ function disaggregate(m::Sinusoid,
     W_obs  = Diagonal(w_obs)
     DᵀW    = D' * W_obs
     θ      = (DᵀW * D + Λ) \ (DᵀW * y)          # L2 init
+    w_irls = ones(n)                               # identity for L2; overwritten by L1
     if loss_norm == :L1
-        w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
             r      = y .- D * θ
             @. w_irls = 1.0 / (abs(r) + ε_irls)
@@ -135,34 +135,53 @@ function disaggregate(m::Sinusoid,
     n_γ     = length(γ_xs_sp)
     h_γ     = diff(γ_xs_sp)
 
-    # Second derivatives for the natural (zero-curvature) cubic spline
-    γ_S = if n_γ > 2
+    # Natural cubic spline helpers (used for signal and for sandwich variance below)
+    function _γ_S(ys)   # second derivatives for natural spline through (γ_xs_sp, ys)
+        n_γ > 2 || return zeros(n_γ)
         T   = Tridiagonal(h_γ[2:end-1],
                           [2(h_γ[i] + h_γ[i+1]) for i in 1:n_γ-2],
                           h_γ[2:end-1])
-        rhs = [6 * ((γ_ys_sp[i+2] - γ_ys_sp[i+1]) / h_γ[i+1] -
-                    (γ_ys_sp[i+1] - γ_ys_sp[i])   / h_γ[i])
+        rhs = [6 * ((ys[i+2] - ys[i+1]) / h_γ[i+1] -
+                    (ys[i+1] - ys[i])   / h_γ[i])
                for i in 1:n_γ-2]
         [0.0; T \ rhs; 0.0]
-    else
-        zeros(n_γ)
     end
-
-    function γ_interp(t)
+    function _γ_eval(t, ys, S)
         k = clamp(searchsortedlast(γ_xs_sp, t), 1, n_γ - 1)
         a = (γ_xs_sp[k+1] - t) / h_γ[k]
         b = (t - γ_xs_sp[k])   / h_γ[k]
-        return a * γ_ys_sp[k] + b * γ_ys_sp[k+1] +
-               ((a^3 - a) * γ_S[k] + (b^3 - b) * γ_S[k+1]) * h_γ[k]^2 / 6
+        a * ys[k] + b * ys[k+1] + ((a^3 - a) * S[k] + (b^3 - b) * S[k+1]) * h_γ[k]^2 / 6
     end
 
-    values = [μ_fit + β_fit * (t - t_ref) + γ_interp(t) +
-              A_fit * sin(2π * t) + B_fit * cos(2π * t)
-              for t in eval_times]
+    γ_S_fit = _γ_S(γ_ys_sp)
+    values  = [μ_fit + β_fit * (t - t_ref) + _γ_eval(t, γ_ys_sp, γ_S_fit) +
+               A_fit * sin(2π * t) + B_fit * cos(2π * t)
+               for t in eval_times]
 
     r       = y .- D * θ
     std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
-    std_vec = fill(std_val, length(eval_times))
+
+    # Sandwich variance: std varies with observation density.
+    # f(t*) = e(t*)' θ,  Var(f(t*)) = σ̂² ‖e(t*)' G‖²
+    # where G = Θ_inv D' √W_eff  and  Θ_inv = (D' W_eff D + Λ)⁻¹.
+    n_out   = length(eval_times)
+    w_eff   = w_irls .* w_obs
+    Θ_mat   = D' * Diagonal(w_eff) * D + Λ
+    G       = inv(Θ_mat) * (D' * Diagonal(sqrt.(w_eff)))     # [n_params × n]
+
+    # Columns of E corresponding to γ_yr_k: evaluate spline with unit vector in pos k
+    E_γ = zeros(n_out, n_years)
+    for k in 1:n_years
+        γ_unit    = zeros(n_years); γ_unit[k] = 1.0
+        S_unit    = _γ_S(γ_unit)
+        E_γ[:, k] = [_γ_eval(t, γ_unit, S_unit) for t in eval_times]
+    end
+
+    E   = hcat(ones(n_out), eval_times .- t_ref, E_γ,
+               sin.(2π .* eval_times), cos.(2π .* eval_times))  # [n_out × n_params]
+    EG  = E * G                                                   # [n_out × n]
+    var_vec = std_val^2 .* vec(sum(EG.^2, dims=2))
+    std_vec = sqrt.(var_vec)
 
     return DimStack(
         (signal = DimArray(values,  Ti(out_dates)),

@@ -1,3 +1,13 @@
+# Module-level solver — avoids a closure allocation on every disaggregate() call.
+function _spline_solve(A, b)
+    try
+        return A \ b
+    catch e
+        e isa SingularException || rethrow()
+        return pinv(A) * b
+    end
+end
+
 function disaggregate(m::Spline,
                       aggregate_values::AbstractVector,
                       interval_start::AbstractVector{<:Dates.TimeType},
@@ -66,15 +76,11 @@ function disaggregate(m::Spline,
                 "increase n_knots or the time span."))
     end
 
-    # Observation matrix C: C[i,j] = B_j(t2[i]) − B_j(t1[i])
-    # By the fundamental theorem of calculus, C * a = areas  ⟺  F(t2ᵢ)−F(t1ᵢ) = areaᵢ
-    C = [bsplinebasis(P_F, j, t2[i]) - bsplinebasis(P_F, j, t1[i])
-         for i in 1:n, j in 1:n_basis]
-    # Normalise each row by the interval length so we fit interval averages (y)
-    # rather than interval totals (areas).  This gives equal weight to every
-    # observation regardless of length and keeps RSS in signal² units.
-    Δt     = Array(t2 .- t1)
-    C_norm = C ./ Δt
+    # Observation matrix C_norm: C_norm[i,j] = (B_j(t2[i]) − B_j(t1[i])) / Δt[i]
+    # Built directly (avoids intermediate C matrix and a second n×n_basis allocation).
+    Δt     = t2 .- t1
+    C_norm = [(bsplinebasis(P_F, j, t2[i]) - bsplinebasis(P_F, j, t1[i])) / Δt[i]
+              for i in 1:n, j in 1:n_basis]
 
     # P-spline penalty of order `penalty_order`: ‖Dᵣ a‖²
     Dr   = _difference_matrix(n_basis, m.penalty_order)
@@ -94,20 +100,23 @@ function disaggregate(m::Spline,
 
     # Weighted least-squares with P-spline (+ optional tension) regularisation.
     # λ scaled by ‖C'C‖/n so `smoothness` is dimensionless.
-    ε_irls = 1e-6 * (std(y) + 1e-10)
-    W_obs  = Diagonal(w_obs)
-    CWC    = C_norm' * W_obs * C_norm
-    λ      = m.smoothness * (norm(CWC) / n + 1e-10)
-    _solve(A, b) = try A \ b catch e; e isa SingularException || rethrow(); pinv(A) * b end
-    a      = _solve(CWC + λ * P, C_norm' * W_obs * y)   # L2 init (also final if loss_norm==:L2)
+    # C_w = √w_obs ⊙ C_norm so that C_w'C_w = C_norm' Diag(w_obs) C_norm
+    # via BLAS syrk (A'A path) — avoids the n_basis×n intermediate from C_norm'*Diag*C_norm.
+    ε_irls    = 1e-6 * (std(y) + 1e-10)
+    sqrt_w_obs = sqrt.(w_obs)
+    C_w        = sqrt_w_obs .* C_norm
+    CWC        = C_w' * C_w
+    λ          = m.smoothness * (norm(CWC) / n + 1e-10)
+    a          = _spline_solve(CWC + λ * P, C_norm' * (w_obs .* y))
+    w_irls     = ones(n)                    # identity for L2; overwritten by L1
     if loss_norm == :L1
-        w_irls = Vector{Float64}(undef, n)
         for _ in 1:50
-            r     = y .- C_norm * a
+            r        = y .- C_norm * a
             @. w_irls = 1.0 / (abs(r) + ε_irls)
-            W_eff  = Diagonal(w_irls .* w_obs)
-            CWC_e  = C_norm' * W_eff * C_norm
-            a_new  = _solve(CWC_e + λ * P, C_norm' * W_eff * y)
+            w_eff_i  = w_irls .* w_obs
+            C_w_i    = sqrt.(w_eff_i) .* C_norm
+            CWC_e    = C_w_i' * C_w_i
+            a_new    = _spline_solve(CWC_e + λ * P, C_norm' * (w_eff_i .* y))
             _irls_converged(a_new, a) && (a = a_new; break)
             a = a_new
         end
@@ -116,17 +125,33 @@ function disaggregate(m::Spline,
     # Instantaneous signal: x(t) = F′(t) = Σⱼ aⱼ B′ⱼ(t)
     dP_F = BasicBSpline.derivative(P_F)
 
-    # Evaluate on the output grid clamped to the data domain
+    # Evaluate on the output grid clamped to the data domain.
+    # B_out [n_basis × n_out] is built once in column-major order (no transpose copy)
+    # and reused for both the signal values and the sandwich variance.
     out_start = isnothing(output_start) ? minimum(interval_start) : output_start
     out_end   = isnothing(output_end)   ? maximum(interval_end)   : output_end
     out_dates, eval_times = _date_grid(out_start, out_end, output_period)
     eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
 
-    values = [sum(a[j] * bsplinebasis(dP_F, j, t) for j in 1:n_basis) for t in eval_times]
+    B_out  = [bsplinebasis(dP_F, j, t) for j in 1:n_basis, t in eval_times]  # [n_basis × n_out]
+    values = vec(B_out' * a)                                                    # [n_out]
 
     r       = y .- C_norm * a
     std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
-    std_vec = fill(std_val, length(eval_times))
+
+    # Sandwich variance: std varies with observation density.
+    # f(t*) = b(t*)' M_eff⁻¹ C_norm' W_eff y  →  Var(f(t*)) = σ̂² v' (C_norm' W_eff C_norm) v
+    # where v = M_eff⁻¹ b(t*).  We exploit C_norm' W_eff C_norm = M_eff − λP = CWC_eff to
+    # compute q_vec[k] = (CWC_eff V[:,k]) · V[:,k] without forming the n×n_out matrix C_norm*V.
+    w_eff    = w_irls .* w_obs
+    C_we     = sqrt.(w_eff) .* C_norm
+    CWC_eff  = C_we' * C_we                    # C_norm' Diag(w_eff) C_norm  [n_basis × n_basis]
+    M_eff    = CWC_eff + λ * P
+    V        = _spline_solve(M_eff, B_out)     # [n_basis × n_out]
+    M_data_V = CWC_eff * V                     # [n_basis × n_out] — avoids n×n_out allocation
+    q_vec    = max.(0.0, vec(sum(M_data_V .* V, dims=1)))  # clamp: PSD in theory, ±ε in practice
+    q_mean   = mean(q_vec)
+    std_vec  = q_mean > 1e-10 ? std_val .* sqrt.(q_vec ./ q_mean) : fill(std_val, length(q_vec))
 
     return DimStack(
         (signal = DimArray(values,  Ti(out_dates)),

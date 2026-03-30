@@ -67,14 +67,10 @@ DimStack(
 
 **Shared L1/L2 loss:** All three methods implement optional L1 loss via IRLS (max 50 iterations, tolerance 1e-8 infinity-norm on relative weight change). `loss_norm` is a shared function kwarg.
 
-**`std` semantics differ across methods** — values are not directly comparable:
-| Method | What `std` measures |
-|--------|---------------------|
-| **GP** | True Bayesian posterior uncertainty (depends on kernel and `obs_noise`) |
-| **Spline** | Residual std of predicted vs. observed interval averages (constant across output grid) |
-| **Sinusoid** | Residual std of predicted vs. observed interval averages (constant across output grid) |
-
-For Spline and Sinusoid, `std` is `std(y .- ŷ)` where `ŷ` is the fitted model re-integrated over each observation interval. When using `loss_norm = :L1`, this residual std is computed from the final IRLS solution.
+**`std` semantics are identical across all methods**: spatially-varying sandwich std
+`std(t*) = σ̂ · sqrt(q(t*))` where `σ̂` is the weighted residual RMS and `q(t*)` is a
+dimensionless coverage factor (lower in dense regions, higher in sparse regions).
+When using `loss_norm = :L1`, computed from the final IRLS solution.
 
 ## Helper functions (`src/utils.jl`)
 
