@@ -22,6 +22,7 @@ module TemporalDisaggregations
 
     export disaggregate, yeardecimal,
         DisaggregationMethod, Spline, Sinusoid, GP, GPKF,
-        interval_average
+        interval_average,
+        ApproxPeriodicKernel
 
 end
