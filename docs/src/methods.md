@@ -108,6 +108,25 @@ result = disaggregate(GPKF(
 ), y, t1, t2)
 ```
 
+**Supported kernels:** Only kernels with a known LTI-SDE (state-space) representation are supported. Passing an unsupported kernel raises a `MethodError` on `stationary_distribution`.
+
+| Kernel | Constructor | Notes |
+|--------|-------------|-------|
+| Matérn 1/2 | `Matern12Kernel()` | Equivalent to `ExponentialKernel()` |
+| Matérn 3/2 | `Matern32Kernel()` | |
+| Matérn 5/2 | `Matern52Kernel()` | Default; good general-purpose choice |
+| Cosine | `CosineKernel()` | Undamped periodic component |
+| Constant | `ConstantKernel(c=1.0)` | Bias / intercept term |
+| Approx. periodic | `ApproxPeriodicKernel{N}(PeriodicKernel(...))` | `N` = approximation order (7–10 typical); `ArrayStorage` only |
+
+All supported base kernels can be composed via:
+- **Scaling:** `σ² * k`
+- **Lengthscale:** `with_lengthscale(k, ℓ)`
+- **Sum:** `k1 + k2` (e.g. seasonal + trend)
+- **Product:** `k1 * k2` (e.g. periodic × decaying envelope)
+
+**Unsupported kernels** (use `GP` instead): `RationalQuadraticKernel`, `LinearKernel`, `PolynomialKernel`, `SqExponentialKernel`, `PeriodicKernel` (bare).
+
 **Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
 ![GPKF posterior mean and 2σ band](./assets/gpkf_detail.png)
