@@ -8,10 +8,10 @@ Benchmarks: 20-year span, `output_period=Week(1)`, 8 threads (Julia 1.12). Time 
 
 | Method | Pros | Cons | n = 10k | n = 100k | n = 1M |
 |--------|------|------|:-------:|:--------:|:------:|
-| `Spline` | No kernel required; optional tension suppresses oscillation near sparse gaps | Design matrix O(n × n\_knots); can oscillate without tension | 12 ms / 19 MB | 103 ms / 192 MB | 807 ms / 1.9 GB |
-| `Sinusoid` | Analytical integrals (no quadrature); interpretable parameters (amplitude, phase, trend, anomalies); lowest peak memory | Assumes annual periodicity; poor fit for non-sinusoidal signals | 61 ms / 2 MB | 133 ms / 19 MB | 2.4 s / 192 MB |
-| `GP` | Arbitrary KernelFunctions.jl kernels; most flexible | O(n·m·q + m³) Cholesky — memory-limited above n ≈ 50 000 at weekly output | 2.0 s / 195 MB | 13.3 s / 1.9 GB | — (>8 GB) |
-| `GPKF` | O(n·d²) Kalman filter; exact posterior (no inducing approximation); scales to n=1M | TemporalGPs-compatible kernels only; no `PeriodicKernel` | 24 ms / 1.2 MB | 241 ms / 12 MB | 2.3 s / 120 MB |
+| `Spline` | No kernel required; optional tension suppresses oscillation near sparse gaps | Design matrix O(n × n\_knots); can oscillate without tension | **12 ms**<br>19 MB | **103 ms**<br>192 MB | **807 ms**<br>1.9 GB |
+| `Sinusoid` | Analytical integrals (no quadrature); interpretable parameters (amplitude, phase, trend, anomalies); lowest peak memory | Assumes annual periodicity; poor fit for non-sinusoidal signals | **61 ms**<br>2 MB | **133 ms**<br>19 MB | **2.4 s**<br>192 MB |
+| `GP` | Arbitrary KernelFunctions.jl kernels; most flexible | O(n·m·q + m³) Cholesky — memory-limited above n ≈ 50 000 at weekly output | **2.0 s**<br>195 MB | **13.3 s**<br>1.9 GB | —<br>(>8 GB) |
+| `GPKF` | O(n·d²) Kalman filter; exact posterior (no inducing approximation); scales to n=1M | TemporalGPs-compatible kernels only; no `PeriodicKernel` | **24 ms**<br>1.2 MB | **241 ms**<br>12 MB | **2.3 s**<br>120 MB |
 
 ## B-spline (`Spline`)
 
