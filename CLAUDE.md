@@ -8,10 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Start Julia REPL with the package loaded
 julia --project=.
 
-# Run tests
-julia --project=test test/runtests.jl
-# or from the Julia REPL:
-# ] activate test; test TemporalDisaggregations
+# Run tests (uses ReTestItems.jl for parallel execution)
+julia --project=. -e 'import Pkg; Pkg.test()'
+# or with explicit worker count:
+# RETESTITEMS_NWORKERS=4 julia --project=. -e 'import Pkg; Pkg.test()'
 
 # Run a specific test block (from the REPL with package loaded)
 # include("test/runtests.jl")
