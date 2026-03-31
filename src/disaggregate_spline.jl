@@ -79,8 +79,21 @@ function disaggregate(m::Spline,
     # Observation matrix C_norm: C_norm[i,j] = (B_j(t2[i]) − B_j(t1[i])) / Δt[i]
     # Built directly (avoids intermediate C matrix and a second n×n_basis allocation).
     Δt     = t2 .- t1
-    C_norm = [(bsplinebasis(P_F, j, t2[i]) - bsplinebasis(P_F, j, t1[i])) / Δt[i]
-              for i in 1:n, j in 1:n_basis]
+    # bsplinebasisall returns all p+1 non-zero basis values at a point in one de Boor pass,
+    # replacing n_basis individual bsplinebasis calls (most of which returned 0).
+    # Parallel :static schedule is safe: each thread writes only to its own row i.
+    C_norm = zeros(Float64, n, n_basis)
+    Threads.@threads :static for i in 1:n
+        inv_dt = 1.0 / Δt[i]
+        j1 = intervalindex(P_F, t1[i])
+        j2 = intervalindex(P_F, t2[i])
+        b1 = bsplinebasisall(P_F, j1, t1[i])
+        b2 = bsplinebasisall(P_F, j2, t2[i])
+        @inbounds for k in 0:p_F
+            C_norm[i, j1 + k] -= b1[k+1] * inv_dt
+            C_norm[i, j2 + k] += b2[k+1] * inv_dt
+        end
+    end
 
     # P-spline penalty of order `penalty_order`: ‖Dᵣ a‖²
     Dr   = _difference_matrix(n_basis, m.penalty_order)
@@ -148,8 +161,17 @@ function disaggregate(m::Spline,
     out_dates, eval_times = _date_grid(out_start, out_end, output_period)
     eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
 
-    B_out  = [bsplinebasis(dP_F, j, t) for j in 1:n_basis, t in eval_times]  # [n_basis × n_out]
-    values = Vector{Float64}(undef, length(eval_times))
+    # bsplinebasisall on the derivative space: one pass per output point instead of n_basis passes.
+    n_eval = length(eval_times)
+    B_out  = zeros(Float64, n_basis, n_eval)
+    for (k, t) in enumerate(eval_times)
+        j = intervalindex(P_F, t)
+        b = bsplinebasisall(dP_F, j, t)
+        @inbounds for l in 0:p_F
+            B_out[j + l, k] = b[l+1]
+        end
+    end
+    values = Vector{Float64}(undef, n_eval)
     mul!(values, B_out', a)
 
     std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))

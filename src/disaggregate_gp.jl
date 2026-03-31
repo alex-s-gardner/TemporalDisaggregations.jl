@@ -55,7 +55,7 @@ function disaggregate(m::GP,
     # ── Integral cross-kernel C [n × n_ind] ───────────────────────────────────
     # C[i, k] = (1/Δtᵢ) ∫_{t1ᵢ}^{t2ᵢ} k(t, Z[k]) dt  ≈  w' K(tq_i, Z)
     C = Matrix{Float64}(undef, n, n_ind)
-    Threads.@threads for i in 1:n
+    Threads.@threads :static for i in 1:n
         mid    = (t1[i] + t2[i]) / 2
         half   = (t2[i] - t1[i]) / 2
         tq     = mid .+ half .* gl_nodes
