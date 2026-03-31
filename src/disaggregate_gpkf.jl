@@ -1,3 +1,15 @@
+# ApproxPeriodicKernel requires ArrayStorage (not SArrayStorage).
+# Walk the kernel tree to detect it and select the right storage type.
+_has_approx_periodic(::Any) = false
+_has_approx_periodic(::ApproxPeriodicKernel) = true
+_has_approx_periodic(k::KernelFunctions.KernelSum)     = any(_has_approx_periodic, k.kernels)
+_has_approx_periodic(k::KernelFunctions.KernelProduct) = any(_has_approx_periodic, k.kernels)
+_has_approx_periodic(k::KernelFunctions.ScaledKernel)  = _has_approx_periodic(k.kernel)
+_has_approx_periodic(k::KernelFunctions.TransformedKernel) = _has_approx_periodic(k.kernel)
+
+_gpkf_storage(kernel) =
+    _has_approx_periodic(kernel) ? ArrayStorage(Float64) : SArrayStorage(Float64)
+
 function disaggregate(m::GPKF,
                       aggregate_values::AbstractVector,
                       interval_start::AbstractVector{<:Dates.TimeType},
@@ -70,7 +82,7 @@ function disaggregate(m::GPKF,
     σ²_sorted = σ²_all[perm]
 
     # ── TemporalGPs Kalman filter (L2 first pass) ─────────────────────────────
-    f_sde = to_sde(AbstractGPs.GP(m.kernel), SArrayStorage(Float64))
+    f_sde = to_sde(AbstractGPs.GP(m.kernel), _gpkf_storage(m.kernel))
     fx    = f_sde(t_sorted, Diagonal(σ²_sorted))
     post  = posterior(fx, y_sorted)
 

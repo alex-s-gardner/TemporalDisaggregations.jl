@@ -32,7 +32,7 @@ julia --project=docs docs/make.jl
 
 This is a Julia package that reconstructs instantaneous time series from interval-averaged observations (temporal disaggregation). The core problem: given measurements averaged over overlapping time intervals, recover the underlying instantaneous signal.
 
-**Exports:** `disaggregate`, `yeardecimal`, `interval_average`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`, `GPKF`.
+**Exports:** `disaggregate`, `yeardecimal`, `interval_average`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`, `GPKF`, `ApproxPeriodicKernel`.
 
 **Public API:** `disaggregate(method::DisaggregationMethod, aggregate_values, interval_start, interval_end; loss_norm=:L2, output_period=Month(1), output_start=nothing, output_end=nothing, weights=nothing)` — dispatches on the algorithm struct type. Method-specific parameters live in the struct; shared kwargs (`loss_norm`, `output_period`, `output_start`, `output_end`, `weights`) stay as function kwargs. `weights` is a length-n vector of positive per-observation weights (e.g. `1 ./ σ²_obs`); for `:L1` loss they are multiplied element-wise with the IRLS weights.
 

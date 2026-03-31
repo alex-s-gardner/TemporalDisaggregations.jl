@@ -191,14 +191,21 @@ println("Saved fig1_small_n_four_methods.png")
 
 println("\n── Figure 2: large n ($n_large observations), timing ──")
 
-print("  Spline:   "); @time r_sp_l    = disaggregate(Spline(smoothness = 1e-4),
-                                                        y_large, t1_large, t2_large)
-print("  Sinusoid: "); @time r_sin_l  = disaggregate(Sinusoid(),
-                                                        y_large, t1_large, t2_large)
-print("  GP:       "); @time r_gp_l   = disaggregate(GP(obs_noise = noise_std^2),
-                                                        y_large, t1_large, t2_large)
-print("  GPKF:     "); @time r_gpkf_l = disaggregate(GPKF(obs_noise = noise_std^2),
-                                                        y_large, t1_large, t2_large)
+# Warm up (first call pays compilation cost), then time the second run
+disaggregate(Spline(smoothness = 1e-4),   y_large, t1_large, t2_large)
+disaggregate(Sinusoid(),                   y_large, t1_large, t2_large)
+disaggregate(GP(obs_noise = noise_std^2),  y_large, t1_large, t2_large)
+disaggregate(GPKF(obs_noise = noise_std^2), y_large, t1_large, t2_large)
+
+t_sp_l   = @elapsed r_sp_l    = disaggregate(Spline(smoothness = 1e-4),    y_large, t1_large, t2_large)
+t_sin_l  = @elapsed r_sin_l   = disaggregate(Sinusoid(),                    y_large, t1_large, t2_large)
+t_gp_l   = @elapsed r_gp_l    = disaggregate(GP(obs_noise = noise_std^2),   y_large, t1_large, t2_large)
+t_gpkf_l = @elapsed r_gpkf_l  = disaggregate(GPKF(obs_noise = noise_std^2), y_large, t1_large, t2_large)
+
+@printf("  Spline:   %.1f ms\n", t_sp_l   * 1e3)
+@printf("  Sinusoid: %.1f ms\n", t_sin_l  * 1e3)
+@printf("  GP:       %.1f ms\n", t_gp_l   * 1e3)
+@printf("  GPKF:     %.1f ms\n", t_gpkf_l * 1e3)
 
 t_out_l    = t_axis(r_sp_l)
 sp_μ_l     = r_sp_l.signal.data
@@ -211,19 +218,19 @@ gpkf_σ_l   = r_gpkf_l.std.data
 fig2 = Figure(size = (1600, 380), fontsize = 12);
 
 ax2a = Axis(fig2[1, 1]; xlabel = "Year", ylabel = "Signal",
-    title = "Spline  (smoothness=1e-4, n=$n_large)");
+    title = @sprintf("Spline  (smoothness=1e-4, n=%d,  %.1f ms)", n_large, t_sp_l * 1e3));
 lines!(ax2a, t_out_l, sp_μ_l;  color = :steelblue,  linewidth = 2, label = "Spline")
 lines!(ax2a, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True signal")
 axislegend(ax2a; position = :lt, labelsize = 10)
 
 ax2b = Axis(fig2[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Sinusoid  (fastest method, n=$n_large)")
+    title = @sprintf("Sinusoid  (n=%d,  %.1f ms)", n_large, t_sin_l * 1e3))
 lines!(ax2b, t_out_l, sin_μ_l; color = :darkorange,  linewidth = 2, label = "Sinusoid")
 lines!(ax2b, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True signal")
 axislegend(ax2b; position = :lt, labelsize = 10)
 
 ax2c = Axis(fig2[1, 3]; xlabel = "Year", ylabel = "Signal",
-    title = "GP  (DTC sparse inducing, n=$n_large)")
+    title = @sprintf("GP  (DTC sparse inducing, n=%d,  %.1f ms)", n_large, t_gp_l * 1e3))
 band!(ax2c, t_out_l, gp_μ_l .- 2gp_σ_l, gp_μ_l .+ 2gp_σ_l;
     color = (:crimson, 0.15), label = "± 2σ")
 lines!(ax2c, t_out_l, gp_μ_l;  color = :crimson,     linewidth = 2, label = "GP mean")
@@ -231,7 +238,7 @@ lines!(ax2c, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "T
 axislegend(ax2c; position = :lt, labelsize = 10)
 
 ax2d = Axis(fig2[1, 4]; xlabel = "Year", ylabel = "Signal",
-    title = "GPKF  (Kalman filter, O(n·d²), n=$n_large)")
+    title = @sprintf("GPKF  (Kalman filter, O(n·d²), n=%d,  %.1f ms)", n_large, t_gpkf_l * 1e3))
 band!(ax2d, t_out_l, gpkf_μ_l .- 2gpkf_σ_l, gpkf_μ_l .+ 2gpkf_σ_l;
     color = (:teal, 0.15), label = "± 2σ")
 lines!(ax2d, t_out_l, gpkf_μ_l; color = :teal, linewidth = 2, label = "GPKF mean")
@@ -415,14 +422,21 @@ println("Saved fig5_gp_kernels.png")
 
 println("\n── Figure 6: L1 vs L2 blunder suppression ──")
 
-# Inject 3 blunders ≈ 5× signal std at positions 4, 14, 24
-y_blundered = copy(y_small)
-blunder_idx = [3, round(Int, n_small ÷ 2), n_small - 2]
-y_blundered[blunder_idx] .+= 5 * std(y_small)
+# Use the large dataset (n=2000, short intervals) so the spline system is
+# overdetermined (n >> n_basis ≈ 50).  With n_small=20, the spline has more
+# basis functions than observations and can fit every point — including blunders
+# — with near-zero residuals, making IRLS weights identical for all points
+# and L1 indistinguishable from L2.
+#
+# Inject ~5% blunders (≈ 100 observations) spread across the dataset,
+# each shifted ≈ 5× signal std.  Enough to strongly distort L2 while L1 ignores them.
+y_blundered = copy(y_large)
+blunder_idx = sort(randperm(n_large)[1:round(Int, 0.05 * n_large)])
+y_blundered[blunder_idx] .+= 5 * std(y_large)
 
-r_l2 = disaggregate(Spline(), y_blundered, t1_small, t2_small;
+r_l2 = disaggregate(Spline(), y_blundered, t1_large, t2_large;
                      loss_norm = :L2)
-r_l1 = disaggregate(Spline(), y_blundered, t1_small, t2_small;
+r_l1 = disaggregate(Spline(), y_blundered, t1_large, t2_large;
                      loss_norm = :L1)
 
 t_bl   = t_axis(r_l2)
@@ -431,13 +445,13 @@ l1_μ   = r_l1.signal.data;  l1_σ  = r_l1.std.data
 
 # Interval segments, colour-coded: red for blunders, grey for clean
 seg_colors = [i in blunder_idx ? (:crimson, 0.8) : (:black, 0.3)
-              for i in 1:n_small]
+              for i in 1:n_large]
 
-segs_bl       = make_segs(t1_small, t2_small, y_blundered)
-segs_bl_clean = make_segs(t1_small[setdiff(1:n_small, blunder_idx)],
-                           t2_small[setdiff(1:n_small, blunder_idx)],
-                           y_blundered[setdiff(1:n_small, blunder_idx)])
-segs_blunders = make_segs(t1_small[blunder_idx], t2_small[blunder_idx],
+segs_bl       = make_segs(t1_large, t2_large, y_blundered)
+segs_bl_clean = make_segs(t1_large[setdiff(1:n_large, blunder_idx)],
+                           t2_large[setdiff(1:n_large, blunder_idx)],
+                           y_blundered[setdiff(1:n_large, blunder_idx)])
+segs_blunders = make_segs(t1_large[blunder_idx], t2_large[blunder_idx],
                            y_blundered[blunder_idx])
 
 fig6 = Figure(size = (1000, 420), fontsize = 12)
@@ -599,8 +613,8 @@ t_gpkf_sc = @elapsed r_gpkf_sc = disaggregate(GPKF(obs_noise = noise_std^2),
                                                 y_sc, t1_sc, t2_sc)
 t_gp_sc   = @elapsed r_gp_sc   = disaggregate(GP(obs_noise = noise_std^2),
                                                 y_sc, t1_sc, t2_sc)
-@printf("    GP:   %.2f s\n", t_gp_sc)
-@printf("    GPKF: %.3f s  (%.0f× faster)\n", t_gpkf_sc, t_gp_sc / t_gpkf_sc)
+@printf("    GP:   %.1f ms\n", t_gp_sc   * 1e3)
+@printf("    GPKF: %.1f ms  (%.0f× faster)\n", t_gpkf_sc * 1e3, t_gp_sc / t_gpkf_sc)
 
 t_sc_out   = t_axis(r_gpkf_sc)
 gpkf_sc_μ  = r_gpkf_sc.signal.data;  gpkf_sc_σ  = r_gpkf_sc.std.data
@@ -609,7 +623,7 @@ gp_sc_μ    = r_gp_sc.signal.data;    gp_sc_σ    = r_gp_sc.std.data
 fig9 = Figure(size = (1000, 420), fontsize = 12)
 
 ax9a = Axis(fig9[1, 1]; xlabel = "Year", ylabel = "Signal",
-    title = "GP (DTC)  n=$n_scale — $(round(t_gp_sc, digits=1)) s")
+    title = @sprintf("GP (DTC)  n=%d — %.1f ms", n_scale, t_gp_sc * 1e3))
 band!(ax9a, t_sc_out, gp_sc_μ .- 2gp_sc_σ, gp_sc_μ .+ 2gp_sc_σ;
     color = (:crimson, 0.2), label = "± 2σ")
 lines!(ax9a, t_sc_out, gp_sc_μ; color = :crimson, linewidth = 2.5, label = "GP mean")
@@ -617,7 +631,7 @@ lines!(ax9a, t_decyear, signal;  color = (:black, 0.2), linewidth = 1, label = "
 axislegend(ax9a; position = :lt, labelsize = 11)
 
 ax9b = Axis(fig9[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "GPKF (Kalman)  n=$n_scale — $(round(t_gpkf_sc*1e3, digits=0)) ms")
+    title = @sprintf("GPKF (Kalman)  n=%d — %.1f ms", n_scale, t_gpkf_sc * 1e3))
 band!(ax9b, t_sc_out, gpkf_sc_μ .- 2gpkf_sc_σ, gpkf_sc_μ .+ 2gpkf_sc_σ;
     color = (:teal, 0.2), label = "± 2σ")
 lines!(ax9b, t_sc_out, gpkf_sc_μ; color = :teal,  linewidth = 2.5, label = "GPKF mean")

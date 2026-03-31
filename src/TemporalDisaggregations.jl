@@ -9,7 +9,7 @@ module TemporalDisaggregations
     using FastGaussQuadrature
     using DimensionalData: DimStack, DimArray, Ti, dims
     import DateFormats: yeardecimal
-    using TemporalGPs: to_sde, SArrayStorage
+    using TemporalGPs: to_sde, SArrayStorage, ArrayStorage, ApproxPeriodicKernel
 
     include("utils.jl")
     include("methods.jl")
@@ -22,6 +22,7 @@ module TemporalDisaggregations
 
     export disaggregate, yeardecimal,
         DisaggregationMethod, Spline, Sinusoid, GP, GPKF,
-        interval_average
+        interval_average,
+        ApproxPeriodicKernel
 
 end
