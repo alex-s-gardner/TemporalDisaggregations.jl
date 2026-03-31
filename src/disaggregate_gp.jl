@@ -96,6 +96,8 @@ function disaggregate(m::GP,
     # In-place M_W construction avoids K.*σ² temporary; M_W_buf reused in L1 loop.
     M_W_buf    = K_raw .* σ²
     M_W_buf  .+= S_W
+    jitter_M   = 1e-6 * tr(M_W_buf) / n_ind   # relative jitter on M_W (independent of σ²)
+    M_W_buf[diagind(M_W_buf)] .+= jitter_M
     M_W        = Symmetric(M_W_buf)
     L_M        = cholesky(M_W)
 
@@ -119,6 +121,7 @@ function disaggregate(m::GP,
             @. C_w_eff = sqrt(w_irls * w_obs) * C
             mul!(S_W_buf, C_w_eff', C_w_eff)
             @. M_W_buf = K_raw * σ² + S_W_buf
+            M_W_buf[diagind(M_W_buf)] .+= jitter_M
             M_W    = Symmetric(M_W_buf)
             L_M    = cholesky(M_W)
             @. sqrt_wy = sqrt(w_irls * w_obs) * y
