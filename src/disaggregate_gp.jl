@@ -54,19 +54,30 @@ function disaggregate(m::GP,
 
     # ── Integral cross-kernel C [n × n_ind] ───────────────────────────────────
     # C[i, k] = (1/Δtᵢ) ∫_{t1ᵢ}^{t2ᵢ} k(t, Z[k]) dt  ≈  w' K(tq_i, Z)
+    # Per-thread tq and Ci buffers avoid n × (tq alloc + mul-result alloc).
+    # Ci_buf is contiguous so the BLAS gemv writes to unit-stride memory;
+    # the strided copy into C[i,:] is then a single memcpy-like pass.
+    nt       = Threads.maxthreadid()         # covers all thread pools (default + interactive)
+    tq_bufs  = [Vector{Float64}(undef, m.n_quad) for _ in 1:nt]
+    Ci_bufs  = [Vector{Float64}(undef, n_ind)    for _ in 1:nt]
     C = Matrix{Float64}(undef, n, n_ind)
     Threads.@threads for i in 1:n
-        mid    = (t1[i] + t2[i]) / 2
-        half   = (t2[i] - t1[i]) / 2
-        tq     = mid .+ half .* gl_nodes
-        C[i, :] = kernelmatrix(m.kernel, tq, Z)' * w
+        tid  = Threads.threadid()
+        tq   = tq_bufs[tid]
+        Ci   = Ci_bufs[tid]
+        mid  = (t1[i] + t2[i]) / 2
+        half = (t2[i] - t1[i]) / 2
+        @. tq = mid + half * gl_nodes
+        Ktq  = kernelmatrix(m.kernel, tq, Z)   # [n_quad × n_ind]
+        mul!(Ci, Ktq', w)
+        C[i, :] .= Ci
     end
 
     # ── Kernel matrix at inducing points K [n_ind × n_ind] ───────────────────
     K_raw  = kernelmatrix(m.kernel, Z, Z)
     jitter = 1e-6 * tr(K_raw) / n_ind
-    K_jit  = K_raw + jitter * I              # plain Matrix, includes jitter; reused for M_W
-    K      = Symmetric(K_jit)
+    K_raw[diagind(K_raw)] .+= jitter         # in-place diagonal add; avoids K_jit alloc
+    K      = Symmetric(K_raw)
 
     # ── Sparse GP posterior via matrix inversion lemma ────────────────────────
     # Σ_y = C K⁻¹ Cᵀ + σ²I  [n × n, never formed]
@@ -77,58 +88,77 @@ function disaggregate(m::GP,
     sqrt_w_obs = sqrt.(w_obs)
     C_w        = sqrt_w_obs .* C              # [n × n_ind]
     S_W        = C_w' * C_w                  # [n_ind × n_ind] via BLAS syrk
-    CtWy       = C_w' * (sqrt_w_obs .* y)    # [n_ind]
+    sqrt_wy    = similar(y)                   # reused as r_buf in IRLS and post-loop
+    CtWy       = Vector{Float64}(undef, n_ind)
+    @. sqrt_wy = sqrt_w_obs * y
+    mul!(CtWy, C_w', sqrt_wy)
 
     # In-place M_W construction avoids K.*σ² temporary; M_W_buf reused in L1 loop.
-    M_W_buf    = K_jit .* σ²
+    M_W_buf    = K_raw .* σ²
     M_W_buf  .+= S_W
     M_W        = Symmetric(M_W_buf)
     L_M        = cholesky(M_W)
 
-    v      = L_M \ CtWy                      # M'⁻¹ CᵀWy  [n_ind]
-    μ_Z    = (CtWy .- S_W * v) ./ σ²         # [n_ind]
+    v_buf = Vector{Float64}(undef, n_ind)
+    μ_Z   = Vector{Float64}(undef, n_ind)
+    ldiv!(v_buf, L_M, CtWy)                  # v_buf = L_M \ CtWy; no allocation
+    mul!(μ_Z, S_W, v_buf)
+    @. μ_Z = (CtWy - μ_Z) / σ²              # safe: element-wise read-then-write
 
     # ── L1: IRLS refinement (skipped for :L2) ─────────────────────────────────
     # Replace W=W_obs with combined weights w_irls[i]*w_obs[i], iterate to convergence.
-    # Predicted interval averages are C*v (Woodbury intermediate), not C*μ_Z.
-    # Pre-allocate C_w_eff and M_W_buf outside loop to avoid per-iteration allocation.
-    w_irls = ones(n)                          # identity for L2; overwritten by L1
+    # Predicted interval averages are C*v_buf (Woodbury intermediate), not C*μ_Z.
+    # All buffers pre-allocated outside the loop; pointer swap avoids μ_Z copy/aliasing.
+    μ_Z_new = similar(μ_Z)                   # pre-allocated for IRLS and kriging solve
+    w_irls  = ones(n)                        # identity for L2; overwritten by L1
     if loss_norm == :L1
         ε_irls  = 1e-6 * (std(y) + 1e-10)
         C_w_eff = similar(C)                  # [n × n_ind], reused each iteration
+        S_W_buf = Matrix{Float64}(undef, n_ind, n_ind)
         for _ in 1:50
             @. C_w_eff = sqrt(w_irls * w_obs) * C
-            S_W        = C_w_eff' * C_w_eff   # syrk
-            @. M_W_buf = K_jit * σ² + S_W
-            M_W        = Symmetric(M_W_buf)
-            L_M        = cholesky(M_W)
-            CtWy       = C_w_eff' * (@. sqrt(w_irls * w_obs) * y)
-            v          = L_M \ CtWy
-            μ_Z_new    = (CtWy .- S_W * v) ./ σ²
-            r          = y .- C * v
-            w_irls     = _irls_weights(r, ε_irls)
-            _irls_converged(μ_Z_new, μ_Z) && (μ_Z = μ_Z_new; break)
-            μ_Z = μ_Z_new
+            mul!(S_W_buf, C_w_eff', C_w_eff)
+            @. M_W_buf = K_raw * σ² + S_W_buf
+            M_W    = Symmetric(M_W_buf)
+            L_M    = cholesky(M_W)
+            @. sqrt_wy = sqrt(w_irls * w_obs) * y
+            mul!(CtWy, C_w_eff', sqrt_wy)
+            ldiv!(v_buf, L_M, CtWy)
+            mul!(μ_Z_new, S_W_buf, v_buf)
+            @. μ_Z_new = (CtWy - μ_Z_new) / σ²
+            mul!(sqrt_wy, C, v_buf); @. sqrt_wy = y - sqrt_wy   # sqrt_wy reused as r_buf
+            @. w_irls = 1.0 / (abs(sqrt_wy) + ε_irls)           # in-place; avoids _irls_weights alloc
+            if _irls_converged(μ_Z_new, μ_Z)
+                μ_Z, μ_Z_new = μ_Z_new, μ_Z; break
+            end
+            μ_Z, μ_Z_new = μ_Z_new, μ_Z    # pointer swap — zero cost, avoids aliasing
         end
+        S_W = S_W_buf                         # S_W consistent with final L_M for variance
     end
 
     # ── Kriging from inducing to output grid ──────────────────────────────────────
+    n_out   = length(Z_out)
     K_out_Z = kernelmatrix(m.kernel, Z_out, Z)
     L_K     = cholesky(K)
-    μ_out   = K_out_Z * (L_K \ μ_Z)
+    ldiv!(μ_Z_new, L_K, μ_Z)                # reuse μ_Z_new buffer; μ_Z unchanged
+    μ_out   = K_out_Z * μ_Z_new
 
-    r       = y .- C * v
-    std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
+    mul!(sqrt_wy, C, v_buf); @. sqrt_wy = y - sqrt_wy   # sqrt_wy = residual r
+    # sum(w_obs) = n since w_obs is mean-normalised (w_obs ./= mean(w_obs))
+    std_val = sqrt(mapreduce((wi, ri) -> wi * ri^2, +, w_obs, sqrt_wy) / n)
 
     # Sandwich variance: std varies with observation density.
     # μ_out(t*) = k(t*,Z) M_W⁻¹ C' W_eff y  →  Var = σ̂² u' S_W u
     # where u = M_W⁻¹ k(Z,t*) and S_W = C' Diag(w_eff) C (already computed, consistent with L_M).
     # Identity: ‖√w_eff ⊙ C u‖² = u' S_W u = (S_W U)[:,k] · U[:,k]
     # Replaces n×n_out matrix C*U (~832 MB at n=1e5) with n_ind×n_out S_W*U (~20 MB).
-    U       = L_M \ K_out_Z'                 # M_W⁻¹ K_out_Z^T  [n_ind × n_out]
+    U     = Matrix{Float64}(undef, n_ind, n_out)
+    ldiv!(U, L_M, K_out_Z')                 # copies K_out_Z' into U, solves in-place
     S_W_U   = S_W * U                        # [n_ind × n_out]
-    var_vec = std_val^2 .* vec(sum(S_W_U .* U, dims=1))
-    std_vec = sqrt.(max.(0.0, var_vec))
+    std_vec = Vector{Float64}(undef, n_out)
+    for k in 1:n_out                          # column-dot avoids n_ind×n_out temporary
+        std_vec[k] = sqrt(std_val^2 * max(0.0, dot(view(S_W_U, :, k), view(U, :, k))))
+    end
 
     return DimStack(
         (signal = DimArray(μ_out,    Ti(out_dates)),
