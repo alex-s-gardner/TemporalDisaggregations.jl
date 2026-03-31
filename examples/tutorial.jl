@@ -246,7 +246,7 @@ println("Saved fig2_large_n_timing.png")
 # Section 4 — Figure 3: Spline — effect of smoothness and tension
 # ─────────────────────────────────────────────────────────────────────────────
 # smoothness (λ): larger = smoother.  Too small → overfitting; too large →
-#   over-smoothing.  Default 1e-3 works well for most cases.
+#   over-smoothing.  Default 1e-1 works well for most cases.
 # tension (τ): adds a first-derivative penalty alongside the curvature penalty.
 #   tension≈0.5–1 suppresses oscillation; tension≈5–10 → piecewise-linear.
 # penalty_order: 2 penalises curvature (∫x″²); 3 (default) penalises rate of

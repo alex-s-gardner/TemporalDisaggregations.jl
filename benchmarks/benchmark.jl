@@ -75,9 +75,14 @@ function run_benchmarks()
     sizes = [10_000, 100_000, 1_000_000]
     nruns = [3, 2, 1]
 
+    cpu_info = Sys.cpu_info()
+    cpu_name = isempty(cpu_info) ? "unknown" : cpu_info[1].model
+
     println("\n", "="^72)
     println(" TemporalDisaggregations.jl — timing benchmark")
     println(" Julia ", VERSION, "  threads=", Threads.nthreads())
+    println(" CPU: ", cpu_name, "  (", length(cpu_info), " logical cores)")
+    println(" RAM: ", round(Sys.total_memory() / 1024^3, digits = 1), " GB")
     println(" Span: 20 years (2000–2020)  output_period=Week(1)")
     println("="^72)
 

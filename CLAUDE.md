@@ -32,7 +32,7 @@ julia --project=docs docs/make.jl
 
 This is a Julia package that reconstructs instantaneous time series from interval-averaged observations (temporal disaggregation). The core problem: given measurements averaged over overlapping time intervals, recover the underlying instantaneous signal.
 
-**Exports:** `disaggregate`, `yeardecimal`, `interval_average`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`.
+**Exports:** `disaggregate`, `yeardecimal`, `interval_average`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`, `GPKF`.
 
 **Public API:** `disaggregate(method::DisaggregationMethod, aggregate_values, interval_start, interval_end; loss_norm=:L2, output_period=Month(1), output_start=nothing, output_end=nothing, weights=nothing)` — dispatches on the algorithm struct type. Method-specific parameters live in the struct; shared kwargs (`loss_norm`, `output_period`, `output_start`, `output_end`, `weights`) stay as function kwargs. `weights` is a length-n vector of positive per-observation weights (e.g. `1 ./ σ²_obs`); for `:L1` loss they are multiplied element-wise with the IRLS weights.
 
@@ -42,14 +42,15 @@ abstract type DisaggregationMethod end
 Spline    <: DisaggregationMethod   # smoothness, n_knots, penalty_order, tension
 Sinusoid  <: DisaggregationMethod   # smoothness_interannual
 GP        <: DisaggregationMethod   # kernel, obs_noise, n_quad
+GPKF      <: DisaggregationMethod   # kernel, obs_noise, n_quad
 ```
-All use `@kwdef` with sensible defaults. `GP.kernel` is untyped (`Any`) because KernelFunctions.jl compositions produce deeply nested parametric types.
+All use `@kwdef` with sensible defaults. `GP.kernel` and `GPKF.kernel` are untyped (`Any`) because KernelFunctions.jl compositions produce deeply nested parametric types.
 
 **`yeardecimal(d)`** — re-exported from `DateFormats.jl`; converts a `Date` or `DateTime` to a decimal year (leap-year-aware). E.g. `yeardecimal(Date(2020, 7, 2)) ≈ 2020.5`.
 
 **Time representation:** All interval boundaries are decimal years (e.g. `2020.5` = mid-2020).
 
-**Output / return type:** `disaggregate()` returns a `DimStack` for all three methods:
+**Output / return type:** `disaggregate()` returns a `DimStack` for all four methods:
 ```julia
 DimStack(
     (signal = DimArray(values, Ti(dates)),
@@ -63,7 +64,7 @@ DimStack(
 
 **`src/disaggregate.jl`** — declares the `disaggregate` generic function with its full docstring. Method implementations live in the per-method files below.
 
-**Three method implementations** (each dispatches on its struct):
+**Four method implementations** (each dispatches on its struct):
 
 - `src/disaggregate_spline.jl` — `disaggregate(m::Spline, ...)`. Quartic B-spline antiderivative fit. Models F(t) as a B-spline so that F(t2ᵢ) − F(t1ᵢ) = observed area; instantaneous signal = F′(t). Uses P-spline regularization with optional tension penalty.
 
@@ -71,7 +72,9 @@ DimStack(
 
 - `src/disaggregate_gp.jl` — `disaggregate(m::GP, ...)`. Sparse inducing-point GP (DTC approximation); inducing grid is 2× finer than `output_period` (floored at `Day(1)`). Uses Gauss-Legendre quadrature (`FastGaussQuadrature`) to build the integral cross-kernel matrix via `Threads.@threads` (use `--threads=auto` for best performance). Matrix inversion lemma avoids forming the n×n observation covariance. Always krigs from the inducing grid to the output grid.
 
-**Shared L1/L2 loss:** All three methods implement optional L1 loss via IRLS (max 50 iterations, tolerance 1e-8 infinity-norm on relative weight change). `loss_norm` is a shared function kwarg.
+- `src/disaggregate_gpkf.jl` — `disaggregate(m::GPKF, ...)`. State-space GP via Kalman filter (TemporalGPs.jl). Expands each interval into `n_quad` GL pseudo-points with proportionally inflated noise, sorts them chronologically, then runs `to_sde` + `posterior` for O(n·d²) inference. Outputs directly on the user-specified grid.
+
+**Shared L1/L2 loss:** All four methods implement optional L1 loss via IRLS (max 50 iterations, tolerance 1e-8 infinity-norm on relative weight change). `loss_norm` is a shared function kwarg.
 
 **`std` semantics are identical across all methods**: spatially-varying sandwich std
 `std(t*) = σ̂ · sqrt(q(t*))` where `σ̂` is the weighted residual RMS and `q(t*)` is a
