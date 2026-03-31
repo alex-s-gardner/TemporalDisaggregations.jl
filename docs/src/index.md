@@ -15,8 +15,8 @@ hero:
       link: https://github.com/alex-s-gardner/TemporalDisaggregations.jl
 
 features:
-  - title: Three Methods
-    details: B-spline, sinusoid, and Gaussian Process — all sharing the same interface. Switch by passing a different algorithm struct.
+  - title: Four Methods
+    details: B-spline, sinusoid, Gaussian Process, and Kalman-filter GP — all sharing the same interface. Switch by passing a different algorithm struct.
   - title: Uncertainty Estimates
     details: Every method returns a spatially-varying sandwich std alongside the reconstructed signal — lower where observations are dense, higher where they are sparse.
   - title: Robust to Outliers
