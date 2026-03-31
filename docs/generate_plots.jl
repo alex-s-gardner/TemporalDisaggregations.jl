@@ -36,16 +36,23 @@ r_sin    = disaggregate(Sinusoid(smoothness_interannual = 1e-2), y, t1, t2)
 k = 15.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
      5.0^2 * with_lengthscale(Matern52Kernel(), 2.0) +
      3.0^2 * with_lengthscale(Matern32Kernel(), 1/12)
-     
+
 r_gp = disaggregate(GP(kernel = k, obs_noise = noise_std^2, n_quad = 5), y, t1, t2)
+
+# GPKF uses a TemporalGPs-compatible kernel (no PeriodicKernel).
+k_gpkf = 15.0^2 * with_lengthscale(Matern52Kernel(), 1.0) +
+          5.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
+r_gpkf = disaggregate(GPKF(kernel = k_gpkf, obs_noise = noise_std^2, n_quad = 5), y, t1, t2)
 
 # Extract plain Float64 vectors (avoids Makie/DimensionalData extension conflicts)
 # Scalar indexing on a DimArray always returns a plain scalar.
 
-sp_μ = r_spline.signal.data
-sin_μ = r_sin.signal.data
-gp_μ = r_gp.signal.data
-gp_σ  = r_gp.std.data
+sp_μ    = r_spline.signal.data
+sin_μ   = r_sin.signal.data
+gp_μ    = r_gp.signal.data
+gp_σ    = r_gp.std.data
+gpkf_μ  = r_gpkf.signal.data
+gpkf_σ  = r_gpkf.std.data
 
 # Monthly time axis from the shared output grid
 t_output = yeardecimal.(dims(r_spline, :Ti).val)
@@ -64,9 +71,10 @@ linesegments!(ax1, vcat(collect(zip(pt1, pt2))...);
 lines!(ax1, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True instantaneous signal")
 
 band!(ax1, t_output, gp_μ .- 2 .* gp_σ, gp_μ .+ 2 .* gp_σ; color = (:crimson, 0.15))
-lines!(ax1, t_output, gp_μ;  color = :crimson,   linewidth = 2.5, label = "GP mean")
-lines!(ax1, t_output, sp_μ;  color = :steelblue, linewidth = 2.5, linestyle = :dash, label = "B-spline")
-lines!(ax1, t_output, sin_μ; color = :darkorange, linewidth = 2.5, linestyle = :dot,  label = "Sinusoid")
+lines!(ax1, t_output, gp_μ;   color = :crimson,   linewidth = 2.5, label = "GP mean")
+lines!(ax1, t_output, gpkf_μ; color = :teal,      linewidth = 2.5, linestyle = :dashdot, label = "GPKF mean")
+lines!(ax1, t_output, sp_μ;   color = :steelblue, linewidth = 2.5, linestyle = :dash, label = "B-spline")
+lines!(ax1, t_output, sin_μ;  color = :darkorange, linewidth = 2.5, linestyle = :dot,  label = "Sinusoid")
 
 axislegend(ax1; position = :lt, framevisible = true, labelsize = 12)
 save("docs/images/overview.png", fig1, px_per_unit = 2)
@@ -236,3 +244,24 @@ axislegend(ax8b; position = :lt, framevisible = true, labelsize = 11)
 
 save("docs/images/weights_detail.png", fig8, px_per_unit = 2)
 println("Saved weights_detail.png")
+
+# ── Figure 9: GPKF detail ─────────────────────────────────────────────────────
+fig9 = Figure(size = (900, 420), fontsize = 13);
+
+ax9a = Axis(fig9[1, 1]; xlabel = "Year", ylabel = "Signal",
+    title = "Input: overlapping interval averages")
+linesegments!(ax9a, vcat(collect(zip(pt1, pt2))...);
+    color = (:teal, 0.6), linewidth = 2.5, label = "Interval averages")
+lines!(ax9a, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "True signal")
+axislegend(ax9a; position = :lt, framevisible = true, labelsize = 11)
+
+ax9b = Axis(fig9[1, 2]; xlabel = "Year", ylabel = "Signal",
+    title = "Output: GPKF mean ± 2·sandwich std")
+band!(ax9b, t_output, gpkf_μ .- 2 .* gpkf_σ, gpkf_μ .+ 2 .* gpkf_σ;
+    color = (:teal, 0.2), label = "± 2σ")
+lines!(ax9b, t_output, gpkf_μ; color = :teal, linewidth = 2.5, label = "GPKF mean")
+lines!(ax9b, t_decyear, signal; color = (:black, 0.25), linewidth = 1, label = "True signal")
+axislegend(ax9b; position = :lt, framevisible = true, labelsize = 11)
+
+save("docs/images/gpkf_detail.png", fig9, px_per_unit = 2)
+println("Saved gpkf_detail.png")

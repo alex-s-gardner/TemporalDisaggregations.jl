@@ -53,6 +53,7 @@ end
 spline_mem(n;   n_basis  = 240)  = n * n_basis  * 8
 sinusoid_mem(n; n_params = 24)   = n * n_params * 8
 gp_mem(n;       n_ind    = 2430) = n * n_ind    * 8
+gpkf_mem(n;     n_quad   = 5)    = n * n_quad   * 3 * 8   # O(n·n_quad·d), d=3 for Matern52
 
 # ── Single timed run returning (elapsed_s, alloc_bytes) ──────────────────────
 function time_run(f)
@@ -161,6 +162,24 @@ function run_benchmarks()
                 println("ERROR: ", e)
             end
         end
+
+        # ── GPKF ─────────────────────────────────────────────────────────────
+        print("  GPKF     : warming up ... "); flush(stdout)
+        try
+            disaggregate(GPKF(obs_noise = 4.0, n_quad = 5),
+                         y, t1, t2; output_period = OUT_PERIOD)
+            times = Float64[]; allocs = Float64[]
+            for _ in 1:nr
+                t, b = time_run(() ->
+                    disaggregate(GPKF(obs_noise = 4.0, n_quad = 5),
+                                 y, t1, t2; output_period = OUT_PERIOD))
+                push!(times, t); push!(allocs, b)
+            end
+            @printf("%d runs → %s  (alloc %s)\n", nr,
+                    fmt_time(minimum(times)), fmt_bytes(minimum(allocs)))
+        catch e
+            println("ERROR: ", e)
+        end
     end
 
     println("\n", "="^72)
@@ -172,6 +191,7 @@ function run_benchmarks()
     println("   • Sinusoid: O(n·n_params)             n_params = 2+years+2 ≈ 24")
     println("   • GP      : O(n·n_ind·n_quad + n_ind³) n_ind ≈ 2·52·years ≈ 2430")
     println("   • GP builds C with Threads.@threads — run with --threads=auto")
+    println("   • GPKF    : O(n·n_quad·d²) via Kalman filter, d=3 for Matern52; no large Cholesky")
     println("="^72, "\n")
 end
 

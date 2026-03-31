@@ -907,4 +907,90 @@ end
 
     end  # GP analytical
 
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "GPKF method" begin
+
+        @testset "Returns DimStack with std ≥ 0" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            result = disaggregate(GPKF(obs_noise=0.1), y, t1, t2)
+            @test result isa DimStack
+            @test result.signal isa DimArray
+            @test result.std    isa DimArray
+            @test hasdim(result.signal, Ti)
+            @test length(result.signal) == length(result.std)
+            @test all(result.std.data .>= 0.0)
+            @test all(isfinite, result.signal)
+            @test all(isfinite, result.std)
+        end
+
+        @testset "Signal recovery on constant data" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            c = 5.0
+            y = fill(c, 24)
+            result = disaggregate(GPKF(obs_noise=1e-4), y, t1, t2)
+            @test mean(result.signal) ≈ c atol=0.5
+            @test all(isfinite, result.signal)
+        end
+
+        @testset "L1 loss returns valid result" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            result = disaggregate(GPKF(obs_noise=0.1), y, t1, t2; loss_norm = :L1)
+            @test all(result.std.data .>= 0.0)
+            @test all(isfinite, result.signal)
+        end
+
+        @testset "L1 vs L2 agree on clean data" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [2.0 + sin(2π * i / 12) for i in 1:24]
+            r_l2 = disaggregate(GPKF(obs_noise=0.1), y, t1, t2; loss_norm = :L2)
+            r_l1 = disaggregate(GPKF(obs_noise=0.1), y, t1, t2; loss_norm = :L1)
+            # GPKF IRLS adjusts per-point noise which affects GP smoothing globally;
+            # 0.95 threshold is appropriate (vs 0.99 for Spline/Sinusoid).
+            @test cor(r_l2.signal.data, r_l1.signal.data) > 0.95
+        end
+
+        @testset "output_period = Day(1) produces finer grid" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = ones(12)
+            r_monthly = disaggregate(GPKF(obs_noise=0.1), y, t1, t2)
+            r_daily   = disaggregate(GPKF(obs_noise=0.1), y, t1, t2; output_period = Day(1))
+            @test length(r_daily.signal) > length(r_monthly.signal)
+            @test all(isfinite, r_daily.signal)
+        end
+
+        @testset "Weighted observations: uniform weights match no weights" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = [sin(2π * i / 12) for i in 1:12]
+            r_none = disaggregate(GPKF(obs_noise=0.1), y, t1, t2)
+            r_ones = disaggregate(GPKF(obs_noise=0.1), y, t1, t2; weights = ones(12))
+            @test r_none.signal.data ≈ r_ones.signal.data atol=1e-8
+        end
+
+        @testset "Input validation: DimensionMismatch and ArgumentError" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 6)
+            y = ones(6)
+            @test_throws DimensionMismatch disaggregate(GPKF(), y, t1, t2[1:5])
+            @test_throws ArgumentError     disaggregate(GPKF(), y, t2, t1)
+            @test_throws ArgumentError     disaggregate(GPKF(obs_noise=-1.0), y, t1, t2)
+            @test_throws ArgumentError     disaggregate(GPKF(n_quad=2),       y, t1, t2)
+            @test_throws ArgumentError     disaggregate(GPKF(), y, t1, t2; loss_norm=:L3)
+            @test_throws DimensionMismatch disaggregate(GPKF(), y, t1, t2; weights=ones(5))
+            @test_throws ArgumentError     disaggregate(GPKF(), y, t1, t2; weights=[1,1,1,0,1,1.0])
+        end
+
+        @testset "metadata contains expected keys" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = ones(12)
+            r = disaggregate(GPKF(obs_noise=0.5, n_quad=7), y, t1, t2; loss_norm=:L1)
+            m = metadata(r)
+            @test m[:method]    == :gpkf
+            @test m[:obs_noise] == 0.5
+            @test m[:n_quad]    == 7
+            @test m[:loss_norm] == :L1
+        end
+
+    end  # GPKF
+
 end

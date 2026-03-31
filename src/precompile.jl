@@ -10,24 +10,28 @@ if ccall(:jl_generating_output, Cint, ()) == 1
         w  = fill(1.0, 12)
 
         # Default L2 paths (Date boundaries, Month output)
-        r_sp  = disaggregate(Spline(),   y, t1, t2; output_period = Month(1))
-        r_sin = disaggregate(Sinusoid(), y, t1, t2; output_period = Month(1))
-        r_gp  = disaggregate(GP(),       y, t1, t2; output_period = Month(1))
+        r_sp   = disaggregate(Spline(),   y, t1, t2; output_period = Month(1))
+        r_sin  = disaggregate(Sinusoid(), y, t1, t2; output_period = Month(1))
+        r_gp   = disaggregate(GP(),       y, t1, t2; output_period = Month(1))
+        r_gpkf = disaggregate(GPKF(),     y, t1, t2; output_period = Month(1))
 
-        # L1 loss path (IRLS loop — all three methods share helpers)
+        # L1 loss path (IRLS loop — all methods share helpers)
         disaggregate(Spline(),   y, t1, t2; loss_norm = :L1)
         disaggregate(Sinusoid(), y, t1, t2; loss_norm = :L1)
         disaggregate(GP(),       y, t1, t2; loss_norm = :L1)
+        disaggregate(GPKF(),     y, t1, t2; loss_norm = :L1)
 
         # Weighted observations path
         disaggregate(Spline(),   y, t1, t2; weights = w)
         disaggregate(Sinusoid(), y, t1, t2; weights = w)
         disaggregate(GP(),       y, t1, t2; weights = w)
+        disaggregate(GPKF(),     y, t1, t2; weights = w)
 
         # interval_average (exported post-processing function)
-        interval_average(r_sp,  t1, t2)
-        interval_average(r_sin, t1, t2)
-        interval_average(r_gp,  t1, t2)
+        interval_average(r_sp,   t1, t2)
+        interval_average(r_sin,  t1, t2)
+        interval_average(r_gp,   t1, t2)
+        interval_average(r_gpkf, t1, t2)
 
         # DateTime boundaries (separate _date_grid specialisation)
         dt1 = DateTime.(t1)
@@ -35,5 +39,6 @@ if ccall(:jl_generating_output, Cint, ()) == 1
         disaggregate(Spline(),   y, dt1, dt2)
         disaggregate(Sinusoid(), y, dt1, dt2)
         disaggregate(GP(),       y, dt1, dt2)
+        disaggregate(GPKF(),     y, dt1, dt2)
     end
 end
