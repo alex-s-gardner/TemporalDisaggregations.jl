@@ -117,7 +117,7 @@ result = disaggregate(GPKF(
 | Matérn 5/2 | `Matern52Kernel()` | Default; good general-purpose choice |
 | Cosine | `CosineKernel()` | Undamped periodic component |
 | Constant | `ConstantKernel(c=1.0)` | Bias / intercept term |
-| Approx. periodic | `ApproxPeriodicKernel{N}(PeriodicKernel(...))` | `N` = approximation order (7–10 typical); `ArrayStorage` only |
+| Approx. periodic | `ApproxPeriodicKernel{N}(PeriodicKernel(...))` | `N` = approximation order (7–10 typical); storage selected automatically |
 
 All supported base kernels can be composed via:
 - **Scaling:** `σ² * k`
