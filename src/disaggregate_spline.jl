@@ -39,11 +39,18 @@ function disaggregate(m::Spline,
     end
 
     # Sort intervals chronologically
-    order = sortperm(interval_start)
-    t1    = yeardecimal.(interval_start[order])
-    t2    = yeardecimal.(interval_end[order])
-    y     = aggregate_values[order]
-    w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+    if !issorted(interval_start)
+        order = sortperm(interval_start)
+        t1    = yeardecimal.(interval_start[order])
+        t2    = yeardecimal.(interval_end[order])
+        aggregate_values     = aggregate_values[order]
+        w_obs = isnothing(weights) ? ones(n) : weights[order]
+    else
+        t1 = yeardecimal.(interval_start)
+        t2 = yeardecimal.(interval_end)
+        w_obs = isnothing(weights) ? ones(n) : weights
+    end
+
     w_obs ./= mean(w_obs)
 
     # Quartic (p=4) B-spline space for F(t); x(t) = F′(t) is cubic.
@@ -83,7 +90,7 @@ function disaggregate(m::Spline,
     # replacing n_basis individual bsplinebasis calls (most of which returned 0).
     # Parallel :static schedule is safe: each thread writes only to its own row i.
     C_norm = zeros(Float64, n, n_basis)
-    Threads.@threads :static for i in 1:n
+    Threads.@threads for i in 1:n
         inv_dt = 1.0 / Δt[i]
         j1 = intervalindex(P_F, t1[i])
         j2 = intervalindex(P_F, t2[i])
@@ -115,11 +122,11 @@ function disaggregate(m::Spline,
     # λ scaled by ‖C'C‖/n so `smoothness` is dimensionless.
     # C_w = √w_obs ⊙ C_norm so that C_w'C_w = C_norm' Diag(w_obs) C_norm
     # via BLAS syrk (A'A path) — avoids the n_basis×n intermediate from C_norm'*Diag*C_norm.
-    ε_irls = 1e-6 * (std(y) + 1e-10)
+    ε_irls = 1e-6 * (std(aggregate_values) + 1e-10)
     C_w    = sqrt.(w_obs) .* C_norm
     CWC    = C_w' * C_w
     λ      = m.smoothness * (norm(CWC) / n + 1e-10)
-    a      = _spline_solve(CWC + λ * P, C_norm' * (w_obs .* y))
+    a      = _spline_solve(CWC + λ * P, C_norm' * (w_obs .* aggregate_values))
     w_irls = ones(n)                        # identity for L2; overwritten by L1
 
     # Pre-allocate residual; computed once for L2, updated each IRLS iteration for L1.
@@ -130,24 +137,24 @@ function disaggregate(m::Spline,
         C_w_eff  = similar(C_norm)
         CWC_e    = Matrix{Float64}(undef, n_basis, n_basis)
         A_irls   = Matrix{Float64}(undef, n_basis, n_basis)
-        w_eff_y  = similar(y)
+        w_eff_y  = similar(aggregate_values)
         rhs_irls = Vector{Float64}(undef, n_basis)
-        mul!(r, C_norm, a); @. r = y - r
+        mul!(r, C_norm, a); @. r = aggregate_values - r
         for _ in 1:50
             @. w_irls  = 1.0 / (abs(r) + ε_irls)
             @. w_eff_i = w_irls * w_obs
             @. C_w_eff = sqrt(w_eff_i) * C_norm   # row-broadcast: (n,) × (n,n_basis)
             mul!(CWC_e, C_w_eff', C_w_eff)
             @. A_irls  = CWC_e + λ * P
-            @. w_eff_y = w_eff_i * y
+            @. w_eff_y = w_eff_i * aggregate_values
             mul!(rhs_irls, C_norm', w_eff_y)
             a_new = _spline_solve(A_irls, rhs_irls)
-            mul!(r, C_norm, a_new); @. r = y - r
+            mul!(r, C_norm, a_new); @. r = aggregate_values - r
             _irls_converged(a_new, a) && (a = a_new; break)
             a = a_new
         end
     else
-        mul!(r, C_norm, a); @. r = y - r
+        mul!(r, C_norm, a); @. r = aggregate_values - r
     end
 
     # Instantaneous signal: x(t) = F′(t) = Σⱼ aⱼ B′ⱼ(t)
