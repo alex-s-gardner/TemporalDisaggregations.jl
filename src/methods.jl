@@ -97,7 +97,8 @@ lower where observations are dense, higher where they are sparse.
 
 # Keywords
 - `kernel`: TemporalGPs-compatible kernel. Default: Matérn-5/2 with 2-month lengthscale.
-- `obs_noise::Float64 = 1.0`: Observation noise variance σ².
+- `obs_noise::Float64 = 1.0`: Observation noise variance σ² **in the same units as y²**.
+  Controls the GP posterior smoothness: smaller values → tighter fit to observations.
 - `n_quad::Int = 5`: Gauss-Legendre quadrature points per interval.
 """
 @kwdef struct GPKF{K} <: DisaggregationMethod

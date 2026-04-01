@@ -5,7 +5,7 @@
 #
 # Produces 8 PNG files in examples/figures/.
 # Uses a fixed random seed so all figures are reproducible.
-
+begin
 using TemporalDisaggregations
 using KernelFunctions
 using CairoMakie
@@ -50,7 +50,7 @@ function interval_avg(t1::Date, t2::Date)
 end
 
 # ── Small dataset: n = 20, intervals ~ 3–8 months long ───────────────────────
-n_small = 20
+n_small = 40
 ctr_s   = t_daily[rand(1:length(t_daily), n_small)]
 half_s  = rand(45:120, n_small)                      # half-length in days
 t1_small = max.(t_daily[1],   ctr_s .- Day.(half_s))
@@ -78,6 +78,7 @@ function make_monthly_intervals(t_start::Date, n::Int)
     t2 = [t_start + Month(i)     for i in 1:n]
     return t1, t2
 end
+end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Section 2 — Figure 1: Small n, all three methods
@@ -87,98 +88,105 @@ end
 #   All methods return a spatially-varying sandwich std (lower in dense regions,
 #   higher in sparse regions).  Sinusoid is fastest but assumes a fixed seasonal
 #   shape.  Spline makes the fewest assumptions.
+begin
+    println("\n── Figure 1: small n, all four methods ──")
 
-println("\n── Figure 1: small n, all four methods ──")
+    r_sp  = disaggregate(Spline(), y_small, t1_small, t2_small)
+    r_sin = disaggregate(Sinusoid(), y_small, t1_small, t2_small)
+    # For sparse long intervals (3–8 months), the kernel must have:
+    #   (1) annual periodic structure — captures seasonal cycles
+    #   (2) lengthscale >> interval length — avoids posterior collapse
+    # obs_noise matches true interval-average noise variance (~0.03–0.04).
+    kern_s = 40.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
+            4.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
+    r_gp = disaggregate(GP(obs_noise=noise_std^2, kernel=kern_s, n_quad=3),
+                        y_small, t1_small, t2_small)
+    # Same kernel as kern_s but with ApproxPeriodicKernel (required for Kalman filter).
+    # Must match kern_s amplitudes and lengthscales so fig1f comparison is meaningful.
+    kern_s_gpkf = 40.0^2 * ApproxPeriodicKernel{7}(PeriodicKernel(r=[0.5])) *
+                            with_lengthscale(Matern52Kernel(), 3.0) +
+                   4.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
+    r_gpkf = disaggregate(GPKF(obs_noise=noise_std^2, kernel=kern_s_gpkf, n_quad=3),
+                        y_small, t1_small, t2_small)
 
-r_sp  = disaggregate(Spline(), y_small, t1_small, t2_small)
-r_sin = disaggregate(Sinusoid(), y_small, t1_small, t2_small)
-kern = 12.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
-       4.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
-r_gp  = disaggregate(GP(obs_noise = noise_std^2, kernel = kern),
-                     y_small, t1_small, t2_small)
-# GPKF uses a TemporalGPs-compatible kernel (no PeriodicKernel).
-kern_gpkf = 12.0^2 * with_lengthscale(Matern52Kernel(), 1.0) +
-             4.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
-r_gpkf = disaggregate(GPKF(obs_noise = noise_std^2, kernel = kern_gpkf),
-                      y_small, t1_small, t2_small)
+    t_out_s  = t_axis(r_sp)
+    sp_μ     = r_sp.signal.data;    sp_σ    = r_sp.std.data
+    sin_μ    = r_sin.signal.data;   sin_σ   = r_sin.std.data
+    gp_μ     = r_gp.signal.data;    gp_σ    = r_gp.std.data
+    gpkf_μ   = r_gpkf.signal.data;  gpkf_σ  = r_gpkf.std.data
 
-t_out_s  = t_axis(r_sp)
-sp_μ     = r_sp.signal.data;    sp_σ    = r_sp.std.data
-sin_μ    = r_sin.signal.data;   sin_σ   = r_sin.std.data
-gp_μ     = r_gp.signal.data;    gp_σ    = r_gp.std.data
-gpkf_μ   = r_gpkf.signal.data;  gpkf_σ  = r_gpkf.std.data
+    # Build interval line-segments for the "input" panel.
+    # linesegments! expects a flat Vector of Point2f: [p1_start, p1_end, p2_start, …]
+    make_segs(t1v, t2v, yv) =
+        vcat([Point2f[Point2f(yeardecimal(t1v[i]), yv[i]),
+                    Point2f(yeardecimal(t2v[i]), yv[i])]
+            for i in eachindex(yv)]...)
 
-# Build interval line-segments for the "input" panel.
-# linesegments! expects a flat Vector of Point2f: [p1_start, p1_end, p2_start, …]
-make_segs(t1v, t2v, yv) =
-    vcat([Point2f[Point2f(yeardecimal(t1v[i]), yv[i]),
-                  Point2f(yeardecimal(t2v[i]), yv[i])]
-          for i in eachindex(yv)]...)
+    segs_s = make_segs(t1_small, t2_small, y_small)
 
-segs_s = make_segs(t1_small, t2_small, y_small)
+    fig1 = Figure(size = (1000, 1080), fontsize = 12);
 
-fig1 = Figure(size = (1000, 1080), fontsize = 12);
+    ax1a = Axis(fig1[1, 1]; xlabel = "Year", ylabel = "Signal",
+        title = "Input: $n_small sparse intervals (≈ 3–8 months each)")
+    linesegments!(ax1a, segs_s; color = (:black, 0.4), linewidth = 2.5,
+        label = "Interval averages (input)")
+    lines!(ax1a, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
+        label = "True signal")
+    axislegend(ax1a; position = :lt, labelsize = 11)
 
-ax1a = Axis(fig1[1, 1]; xlabel = "Year", ylabel = "Signal",
-    title = "Input: $n_small sparse intervals (≈ 3–8 months each)")
-linesegments!(ax1a, segs_s; color = (:black, 0.4), linewidth = 2.5,
-    label = "Interval averages (input)")
-lines!(ax1a, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
-    label = "True signal")
-axislegend(ax1a; position = :lt, labelsize = 11)
+    ax1b = Axis(fig1[1, 2]; xlabel = "Year", ylabel = "Signal",
+        title = "Spline")
+    band!(ax1b, t_out_s, sp_μ .- 2sp_σ, sp_μ .+ 2sp_σ;
+        color = (:steelblue, 0.2), label = "± 2σ")
+    lines!(ax1b, t_out_s, sp_μ; color = :steelblue, linewidth = 2.5,
+        label = "Spline mean")
+    lines!(ax1b, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
+        label = "True signal")
+    axislegend(ax1b; position = :lt, labelsize = 11)
 
-ax1b = Axis(fig1[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "Spline")
-band!(ax1b, t_out_s, sp_μ .- 2sp_σ, sp_μ .+ 2sp_σ;
-    color = (:steelblue, 0.2), label = "± 2σ")
-lines!(ax1b, t_out_s, sp_μ; color = :steelblue, linewidth = 2.5,
-    label = "Spline mean")
-lines!(ax1b, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
-    label = "True signal")
-axislegend(ax1b; position = :lt, labelsize = 11)
+    ax1c = Axis(fig1[2, 1]; xlabel = "Year", ylabel = "Signal",
+        title = "Sinusoid — fastest; assumes seasonal shape")
+    band!(ax1c, t_out_s, sin_μ .- 2sin_σ, sin_μ .+ 2sin_σ;
+        color = (:darkorange, 0.2), label = "± 2σ")
+    lines!(ax1c, t_out_s, sin_μ; color = :darkorange, linewidth = 2.5,
+        label = "Sinusoid mean")
+    lines!(ax1c, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
+        label = "True signal")
+    axislegend(ax1c; position = :lt, labelsize = 11)
 
-ax1c = Axis(fig1[2, 1]; xlabel = "Year", ylabel = "Signal",
-    title = "Sinusoid — fastest; assumes seasonal shape")
-band!(ax1c, t_out_s, sin_μ .- 2sin_σ, sin_μ .+ 2sin_σ;
-    color = (:darkorange, 0.2), label = "± 2σ")
-lines!(ax1c, t_out_s, sin_μ; color = :darkorange, linewidth = 2.5,
-    label = "Sinusoid mean")
-lines!(ax1c, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
-    label = "True signal")
-axislegend(ax1c; position = :lt, labelsize = 11)
+    ax1d = Axis(fig1[2, 2]; xlabel = "Year", ylabel = "Signal",
+        title = "GP — flexible nonparametric reconstruction")
+    band!(ax1d, t_out_s, gp_μ .- 2gp_σ, gp_μ .+ 2gp_σ;
+        color = (:crimson, 0.2), label = "± 2σ")
+    lines!(ax1d, t_out_s, gp_μ; color = :crimson, linewidth = 2.5,
+        label = "GP mean")
+    lines!(ax1d, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
+        label = "True signal")
+    axislegend(ax1d; position = :lt, labelsize = 11)
 
-ax1d = Axis(fig1[2, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "GP — flexible nonparametric reconstruction")
-band!(ax1d, t_out_s, gp_μ .- 2gp_σ, gp_μ .+ 2gp_σ;
-    color = (:crimson, 0.2), label = "± 2σ")
-lines!(ax1d, t_out_s, gp_μ; color = :crimson, linewidth = 2.5,
-    label = "GP mean")
-lines!(ax1d, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
-    label = "True signal")
-axislegend(ax1d; position = :lt, labelsize = 11)
+    ax1e = Axis(fig1[3, 1]; xlabel = "Year", ylabel = "Signal",
+        title = "GPKF — Kalman filter GP (fast, scales to n=1e6)")
+    band!(ax1e, t_out_s, gpkf_μ .- 2gpkf_σ, gpkf_μ .+ 2gpkf_σ;
+        color = (:teal, 0.2), label = "± 2σ")
+    lines!(ax1e, t_out_s, gpkf_μ; color = :teal, linewidth = 2.5,
+        label = "GPKF mean")
+    lines!(ax1e, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
+        label = "True signal")
+    axislegend(ax1e; position = :lt, labelsize = 11)
 
-ax1e = Axis(fig1[3, 1]; xlabel = "Year", ylabel = "Signal",
-    title = "GPKF — Kalman filter GP (fast, scales to n=1e6)")
-band!(ax1e, t_out_s, gpkf_μ .- 2gpkf_σ, gpkf_μ .+ 2gpkf_σ;
-    color = (:teal, 0.2), label = "± 2σ")
-lines!(ax1e, t_out_s, gpkf_μ; color = :teal, linewidth = 2.5,
-    label = "GPKF mean")
-lines!(ax1e, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
-    label = "True signal")
-axislegend(ax1e; position = :lt, labelsize = 11)
+    ax1f = Axis(fig1[3, 2]; xlabel = "Year", ylabel = "Signal",
+        title = "GP vs GPKF comparison (same Matérn-5/2 kernel)")
+    band!(ax1f, t_out_s, gp_μ .- 2gp_σ, gp_μ .+ 2gp_σ;   color = (:crimson, 0.15))
+    band!(ax1f, t_out_s, gpkf_μ .- 2gpkf_σ, gpkf_μ .+ 2gpkf_σ; color = (:teal, 0.15))
+    lines!(ax1f, t_out_s, gp_μ;   color = :crimson, linewidth = 2.5, label = "GP (DTC)")
+    lines!(ax1f, t_out_s, gpkf_μ; color = :teal,   linewidth = 2.5, linestyle = :dash, label = "GPKF (Kalman)")
+    lines!(ax1f, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True signal")
+    axislegend(ax1f; position = :lt, labelsize = 11)
 
-ax1f = Axis(fig1[3, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "GP vs GPKF comparison (same Matérn-5/2 kernel)")
-band!(ax1f, t_out_s, gp_μ .- 2gp_σ, gp_μ .+ 2gp_σ;   color = (:crimson, 0.15))
-band!(ax1f, t_out_s, gpkf_μ .- 2gpkf_σ, gpkf_μ .+ 2gpkf_σ; color = (:teal, 0.15))
-lines!(ax1f, t_out_s, gp_μ;   color = :crimson, linewidth = 2.5, label = "GP (DTC)")
-lines!(ax1f, t_out_s, gpkf_μ; color = :teal,   linewidth = 2.5, linestyle = :dash, label = "GPKF (Kalman)")
-lines!(ax1f, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True signal")
-axislegend(ax1f; position = :lt, labelsize = 11)
-
-display(fig1)
-save(joinpath(fig_dir, "fig1_small_n_four_methods.png"), fig1, px_per_unit = 2)
-println("Saved fig1_small_n_four_methods.png")
+    display(fig1)
+    save(joinpath(fig_dir, "fig1_small_n_four_methods.png"), fig1, px_per_unit = 2)
+    println("Saved fig1_small_n_four_methods.png")
+end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Section 3 — Figure 2: Large n, all three methods (with timing)
