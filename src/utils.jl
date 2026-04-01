@@ -2,19 +2,15 @@ using Dates
 using LinearAlgebra
 
 """
-    _date_grid(start, stop, step)
+    _date_grid(start::Dates.TimeType, stop::Dates.TimeType, step::Dates.Period)
 
 Return `(dates, yeardecimals)` for a grid `start:step:stop` where `start` and `stop`
 are `Date` or `DateTime`. Sub-daily steps coerce `Date` inputs to `DateTime`.
 """
 function _date_grid(start::Dates.TimeType, stop::Dates.TimeType, step::Dates.Period)
-    use_datetime = step isa Union{Hour, Minute, Second, Millisecond} ||
-                   start isa DateTime || stop isa DateTime
-    d_start = use_datetime && start isa Date ? DateTime(start) : start
-    d_end   = use_datetime && stop  isa Date ? DateTime(stop)  : stop
-    dates = collect(d_start:step:d_end)
-    times = yeardecimal.(dates)
-    return dates, times
+    dates = collect(start:step:stop)
+    decyr = yeardecimal.(dates)
+    return dates, decyr
 end
 
 """

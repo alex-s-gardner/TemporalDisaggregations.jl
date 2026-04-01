@@ -28,12 +28,18 @@ function disaggregate(m::GP,
             throw(ArgumentError("All weights must be positive."))
     end
 
-    order = sortperm(interval_start)
-    t1    = yeardecimal.(interval_start[order])
-    t2    = yeardecimal.(interval_end[order])
-    y     = Array(aggregate_values[order])
-    w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+    
+    if !issorted(interval_start)
+        order = sortperm(interval_start)
+        t1    = yeardecimal.(interval_start[order])
+        t2    = yeardecimal.(interval_end[order])
+        y     = Array(aggregate_values[order])
+        w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+    else
+        w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+    end
     w_obs ./= mean(w_obs)
+
 
     # ── Inducing grid: 2× finer than output, floored at Day(1) ───────────────────
     inducing_period = _half_period(output_period)
