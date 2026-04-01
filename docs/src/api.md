@@ -9,6 +9,5 @@ DisaggregationMethod
 Spline
 Sinusoid
 GP
-GPKF
 interval_average
 ```

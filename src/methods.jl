@@ -80,40 +80,4 @@ function Base.show(io::IO, ::MIME"text/plain", m::GP)
     print(io,   "  n_quad:    ", m.n_quad)
 end
 
-"""
-    GPKF(; kernel=with_lengthscale(Matern52Kernel(), 1/6), obs_noise=1.0, n_quad=5)
 
-State-space Gaussian Process via Kalman filtering (TemporalGPs.jl).
-O(n·d²) complexity where d is the kernel state dimension; no large Cholesky; runs at n=1e6.
-
-Each interval observation is expanded into `n_quad` Gauss-Legendre pseudo-point observations
-weighted so that total precision matches the original observation. Requires a kernel supported
-by TemporalGPs: `Matern52Kernel`, `with_lengthscale`, `ScaledKernel`, `KernelSum`,
-`KernelProduct`. **Do not use `PeriodicKernel`** — use `TemporalGPs.ApproxPeriodicKernel{N}`
-instead.
-
-The `:std` layer in the returned `DimStack` is a spatially-varying sandwich standard deviation:
-lower where observations are dense, higher where they are sparse.
-
-# Keywords
-- `kernel`: TemporalGPs-compatible kernel. Default: Matérn-5/2 with 2-month lengthscale.
-- `obs_noise::Float64 = 1.0`: Observation noise variance σ² **in the same units as y²**.
-  Controls the GP posterior smoothness: smaller values → tighter fit to observations.
-- `n_quad::Int = 5`: Gauss-Legendre quadrature points per interval.
-"""
-@kwdef struct GPKF{K} <: DisaggregationMethod
-    kernel::K                        = with_lengthscale(Matern52Kernel(), 1/6)
-    obs_noise::Float64               = 1.0
-    n_quad::Int                      = 5
-end
-
-function Base.show(io::IO, m::GPKF)
-    print(io, "GPKF(obs_noise=$(m.obs_noise), n_quad=$(m.n_quad), kernel=…)")
-end
-
-function Base.show(io::IO, ::MIME"text/plain", m::GPKF)
-    println(io, "GPKF")
-    println(io, "  kernel:    ", m.kernel)
-    println(io, "  obs_noise: ", m.obs_noise)
-    print(io,   "  n_quad:    ", m.n_quad)
-end

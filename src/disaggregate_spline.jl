@@ -83,7 +83,7 @@ function disaggregate(m::Spline,
     # replacing n_basis individual bsplinebasis calls (most of which returned 0).
     # Parallel :static schedule is safe: each thread writes only to its own row i.
     C_norm = zeros(Float64, n, n_basis)
-    Threads.@threads :static for i in 1:n
+    Threads.@threads for i in 1:n
         inv_dt = 1.0 / Δt[i]
         j1 = intervalindex(P_F, t1[i])
         j2 = intervalindex(P_F, t2[i])
