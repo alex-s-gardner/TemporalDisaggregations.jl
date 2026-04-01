@@ -4,7 +4,13 @@ function _spline_solve(A, b)
         return A \ b
     catch e
         e isa SingularException || rethrow()
-        return pinv(A) * b
+        try
+            return pinv(A) * b
+        catch e2
+            e2 isa LAPACKException || rethrow()
+            # Matrix is numerically catastrophic (NaN/Inf); return zeros.
+            return zeros(eltype(b), size(A, 2), size(b)[2:end]...)
+        end
     end
 end
 
@@ -220,4 +226,198 @@ function disaggregate(m::Spline,
             :output_period => output_period,
         )
     )
+end
+
+"""
+    disaggregate(m::Spline, Y, interval_start, interval_end; kwargs...)
+
+Batch variant: `Y` is an `n_obs × n_series` matrix where every column is an independent
+time series sharing the same interval boundaries `interval_start` / `interval_end`.
+
+Expensive structure — knot grid, observation matrix `C_norm`, penalty `P`, and the
+Cholesky factorisation of the regularised Gram matrix — is computed **once** and reused
+across all columns.  For `:L2` loss the entire solve is batched as three BLAS gemm calls
+plus one multi-RHS triangular solve, giving near-linear scaling in `n_series`.
+
+Returns a **named tuple** `(signal, std, dates)` where `signal` and `std` are
+`n_eval × n_series` matrices and `dates` is the output date grid.
+
+`weights` (if supplied) must be a length-`n_obs` vector applied uniformly to every series.
+"""
+function disaggregate(m::Spline,
+                      Y::AbstractMatrix{<:Real},
+                      interval_start::AbstractVector{<:Dates.TimeType},
+                      interval_end::AbstractVector{<:Dates.TimeType};
+                      loss_norm::Symbol = :L2,
+                      output_period::Dates.Period = Month(1),
+                      output_start::Union{Dates.TimeType,Nothing} = nothing,
+                      output_end::Union{Dates.TimeType,Nothing} = nothing,
+                      weights::Union{AbstractVector,Nothing} = nothing)
+
+    n, n_series = size(Y)
+    (length(interval_start) == n && length(interval_end) == n) ||
+        throw(DimensionMismatch(
+            "Y has $n rows but interval_start/interval_end have length $(length(interval_start))."))
+    any(interval_end .<= interval_start) &&
+        throw(ArgumentError("Every interval must satisfy interval_end > interval_start."))
+    m.smoothness >= 0 || throw(ArgumentError("smoothness must be ≥ 0."))
+    m.tension    >= 0 || throw(ArgumentError("tension must be ≥ 0."))
+    loss_norm ∈ (:L1, :L2) ||
+        throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
+    if !isnothing(weights)
+        length(weights) == n ||
+            throw(DimensionMismatch("weights must have length $n (one per observation row)."))
+        all(>(0), weights) || throw(ArgumentError("All weights must be positive."))
+    end
+
+    # ── Shared setup (identical to single-series path) ────────────────────────
+    order = sortperm(interval_start)
+    t1    = yeardecimal.(interval_start[order])
+    t2    = yeardecimal.(interval_end[order])
+    w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+    w_obs ./= mean(w_obs)
+
+    p_F        = 4
+    t1_min     = minimum(t1);  t2_max = maximum(t2)
+    t_range_yr = t2_max - t1_min
+    t_nodes = if isnothing(m.n_knots)
+        n_auto = max(p_F + 2, round(Int, 12 * t_range_yr) + 1)
+        collect(range(t1_min, t2_max; length = n_auto))
+    elseif m.n_knots == 0
+        sort(unique(vcat(t1, t2)))
+    else
+        m.n_knots >= p_F + 1 ||
+            throw(ArgumentError("n_knots must be ≥ $(p_F + 1) for degree-$p_F B-splines."))
+        collect(range(t1_min, t2_max; length = m.n_knots))
+    end
+    k_F    = KnotVector(t_nodes) + p_F * KnotVector([t_nodes[1], t_nodes[end]])
+    P_F    = BSplineSpace{p_F}(k_F)
+    n_basis = dim(P_F)
+
+    Δt     = t2 .- t1
+    C_norm = zeros(Float64, n, n_basis)
+    Threads.@threads for i in 1:n
+        inv_dt = 1.0 / Δt[i]
+        j1 = intervalindex(P_F, t1[i]);  j2 = intervalindex(P_F, t2[i])
+        b1 = bsplinebasisall(P_F, j1, t1[i])
+        b2 = bsplinebasisall(P_F, j2, t2[i])
+        @inbounds for k in 0:p_F
+            C_norm[i, j1 + k] -= b1[k+1] * inv_dt
+            C_norm[i, j2 + k] += b2[k+1] * inv_dt
+        end
+    end
+
+    Dr   = _difference_matrix(n_basis, m.penalty_order)
+    DrDr = Dr' * Dr
+    P = if m.tension > 0.0
+        D2   = _difference_matrix(n_basis, 2)
+        D2D2 = D2' * D2
+        DrDr + m.tension^2 * (norm(DrDr) / (norm(D2D2) + 1e-10)) * D2D2
+    else
+        DrDr
+    end
+
+    C_w = sqrt.(w_obs) .* C_norm          # n × n_basis
+    CWC = C_w' * C_w                       # n_basis × n_basis — shared Gram matrix
+    λ   = m.smoothness * (norm(CWC) / n + 1e-10)
+    M   = Symmetric(CWC + λ * P)
+    # Factor once; reused for every column (L2) or as warm-start (L1).
+    M_fact = cholesky(M; check = false)
+    if !issuccess(M_fact)
+        M_fact = nothing   # fall back to _spline_solve per column
+    end
+    _batch_solve(F, RHS) = isnothing(F) ? _spline_solve(M, RHS) : F \ Matrix(RHS)
+
+    # Output grid — shared
+    out_start = isnothing(output_start) ? minimum(interval_start) : output_start
+    out_end   = isnothing(output_end)   ? maximum(interval_end)   : output_end
+    out_dates, eval_times = _date_grid(out_start, out_end, output_period)
+    eval_times = clamp.(eval_times, t_nodes[1], t_nodes[end])
+    dP_F  = BasicBSpline.derivative(P_F)
+    n_eval = length(eval_times)
+    B_out  = zeros(Float64, n_basis, n_eval)
+    for (k, t) in enumerate(eval_times)
+        j = intervalindex(P_F, t)
+        b = bsplinebasisall(dP_F, j, t)
+        @inbounds for l in 0:p_F; B_out[j + l, k] = b[l+1]; end
+    end
+
+    # ── Reorder Y rows once ────────────────────────────────────────────────────
+    Y_ord = Y[order, :]                    # n × n_series
+
+    # ── Allocate outputs ───────────────────────────────────────────────────────
+    Signal = Matrix{Float64}(undef, n_eval, n_series)
+    Std    = Matrix{Float64}(undef, n_eval, n_series)
+
+    if loss_norm == :L2
+        # ── Fully batched L2 path ─────────────────────────────────────────────
+        # RHS = C_norm' * Diag(w_obs) * Y_ord  [n_basis × n_series]
+        WY  = w_obs .* Y_ord               # broadcast: (n,1) .* (n, n_series)
+        RHS = C_norm' * WY                 # one gemm
+        A   = _batch_solve(M_fact, RHS)    # one multi-RHS triangular solve
+        mul!(Signal, B_out', A)            # one gemm: n_eval × n_series
+        # Residuals = Y_ord - C_norm * A   [n × n_series]
+        Res = Y_ord - C_norm * A           # one gemm
+        # Sandwich variance — q_vec is data-independent, compute once
+        V        = _batch_solve(M_fact, B_out)   # n_basis × n_eval
+        M_data_V = CWC * V
+        q_vec    = [max(0.0, dot(view(M_data_V, :, k), view(V, :, k))) for k in 1:n_eval]
+        q_mean   = mean(q_vec)
+        q_scale  = q_mean > 1e-10 ? sqrt.(q_vec ./ q_mean) : ones(n_eval)
+        w_sum    = sum(w_obs)
+        for j in 1:n_series
+            r_j     = view(Res, :, j)
+            std_val = sqrt(dot(w_obs, r_j .^ 2) / w_sum)
+            Std[:, j] = std_val .* q_scale
+        end
+
+    else  # :L1
+        # ── Per-series IRLS, sharing C_norm / P / B_out ───────────────────────
+        # Allocate IRLS buffers once, reuse across series
+        w_eff_i  = Vector{Float64}(undef, n)
+        C_w_eff  = Matrix{Float64}(undef, n, n_basis)
+        CWC_e    = Matrix{Float64}(undef, n_basis, n_basis)
+        A_irls   = Matrix{Float64}(undef, n_basis, n_basis)
+        rhs_irls = Vector{Float64}(undef, n_basis)
+        r        = Vector{Float64}(undef, n)
+        w_irls   = ones(n)
+        for j in 1:n_series
+            y_j    = view(Y_ord, :, j)
+            ε_irls = 1e-6 * (std(y_j) + 1e-10)
+            # warm-start from L2 solution
+            rhs_j  = C_norm' * (w_obs .* y_j)
+            a      = _batch_solve(M_fact, rhs_j)
+            fill!(w_irls, 1.0)
+            mul!(r, C_norm, a); @. r = y_j - r
+            for _ in 1:50
+                @. w_irls  = 1.0 / (abs(r) + ε_irls)
+                @. w_eff_i = w_irls * w_obs
+                @. C_w_eff = sqrt(w_eff_i) * C_norm
+                mul!(CWC_e, C_w_eff', C_w_eff)
+                @. A_irls  = CWC_e + λ * P
+                @. w_eff_i = w_eff_i * y_j   # reuse as w_eff_y
+                mul!(rhs_irls, C_norm', w_eff_i)
+                a_new = _spline_solve(A_irls, rhs_irls)
+                mul!(r, C_norm, a_new); @. r = y_j - r
+                _irls_converged(a_new, a) && (a = a_new; break)
+                a = a_new
+            end
+            mul!(view(Signal, :, j), B_out', a)
+            # Per-series sandwich variance (CWC_eff depends on final w_irls)
+            @. w_eff_i = w_irls * w_obs     # restore (was overwritten above)
+            @. C_w_eff = sqrt(w_eff_i) * C_norm
+            mul!(CWC_e, C_w_eff', C_w_eff)
+            M_eff_j  = CWC_e + λ * P
+            V_j      = _spline_solve(M_eff_j, B_out)
+            Mdv_j    = CWC_e * V_j
+            q_vec_j  = [max(0.0, dot(view(Mdv_j, :, k), view(V_j, :, k))) for k in 1:n_eval]
+            q_mean_j = mean(q_vec_j)
+            w_sum    = sum(w_obs)
+            std_val  = sqrt(dot(w_irls .* w_obs, r .^ 2) / w_sum)
+            Std[:, j] = q_mean_j > 1e-10 ?
+                std_val .* sqrt.(q_vec_j ./ q_mean_j) : fill(std_val, n_eval)
+        end
+    end
+
+    return (signal = Signal, std = Std, dates = out_dates)
 end
