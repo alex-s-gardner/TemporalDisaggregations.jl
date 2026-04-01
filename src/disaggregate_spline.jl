@@ -4,7 +4,12 @@ function _spline_solve(A, b)
         return A \ b
     catch e
         e isa SingularException || rethrow()
-        return pinv(A) * b
+        try
+            return pinv(A) * b
+        catch e2
+            e2 isa LAPACKException || rethrow()
+            throw(SingularException(0))
+        end
     end
 end
 
