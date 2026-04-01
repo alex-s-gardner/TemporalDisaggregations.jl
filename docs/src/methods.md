@@ -81,11 +81,14 @@ k = 15.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
      5.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
 
 result = disaggregate(GP(
-    kernel    = k,
-    obs_noise = 4.0,    # observation noise variance σ²
-    n_quad    = 5,      # Gauss-Legendre quadrature points per interval
+    kernel           = k,
+    obs_noise        = 4.0,   # initial noise variance σ² (auto-calibrated by default)
+    n_quad           = 5,     # Gauss-Legendre quadrature points per interval
+    calibrate_noise  = true,  # iteratively adjust obs_noise to match residual RMS
 ), y, t1, t2)
 ```
+
+**obs_noise calibration:** When `calibrate_noise=true` (default), the method iteratively adjusts `obs_noise` to the value where the weighted RMS of interval-average residuals equals `sqrt(obs_noise)`. This is an empirical Bayes fixed-point that makes the posterior mean insensitive to the initial `obs_noise` value — useful when `obs_noise` is hard to set a priori (e.g. when data units or scale are unknown). Set `calibrate_noise=false` to use `obs_noise` exactly as specified.
 
 **Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
 
@@ -102,11 +105,14 @@ k = 12.0^2 * with_lengthscale(Matern52Kernel(), 1.0) +
      4.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
 
 result = disaggregate(GPKF(
-    kernel    = k,
-    obs_noise = 4.0,    # observation noise variance σ²
-    n_quad    = 5,      # Gauss-Legendre quadrature points per interval
+    kernel           = k,
+    obs_noise        = 4.0,   # initial noise variance σ² (auto-calibrated by default)
+    n_quad           = 5,     # Gauss-Legendre quadrature points per interval
+    calibrate_noise  = true,  # iteratively adjust obs_noise to match residual RMS
 ), y, t1, t2)
 ```
+
+**obs_noise calibration:** Same empirical Bayes fixed-point as `GP` — see above. The Kalman filter is re-run with updated `obs_noise` at each calibration step.
 
 **Supported kernels:** Only kernels with a known LTI-SDE (state-space) representation are supported. Passing an unsupported kernel raises a `MethodError` on `stationary_distribution`.
 
