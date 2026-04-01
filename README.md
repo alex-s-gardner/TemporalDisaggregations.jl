@@ -53,7 +53,7 @@ lines(result[:signal])
 
 ## Methods
 
-All four methods share the same interface and return type. Switch methods by passing a different algorithm struct [`Spline()`, `Sinusoid()`, `GP()`, `GPKF()`] as the first argument.
+All three methods share the same interface and return type. Switch methods by passing a different algorithm struct [`Spline()`, `Sinusoid()`, `GP()`] as the first argument.
 
 ### B-spline (`Spline`)
 
@@ -133,36 +133,6 @@ result = disaggregate(GP(
 
 ![GP posterior mean and 2σ band](docs/images/gp_detail.png)
 
-### Kalman-filter GP (`GPKF`)
-
-A state-space reformulation of the GP that replaces the O(m³) Cholesky factorisation with an O(n·d²) Kalman filter (d = kernel state dimension, typically 3–45). Gives the **exact posterior** (no inducing-point approximation), runs ~90× faster than `GP` at n=10 000, and scales to n=1 000 000 where `GP` hits memory limits.
-
-Each interval observation is expanded into `n_quad` Gauss-Legendre pseudo-point observations, weighted so the total information content matches the original. Requires a kernel supported by [TemporalGPs.jl](https://github.com/JuliaGaussianProcesses/TemporalGPs.jl): `Matern52Kernel`, `with_lengthscale`, `ScaledKernel`, `KernelSum`, `KernelProduct`. Use `TemporalGPs.ApproxPeriodicKernel{N}` instead of `PeriodicKernel` for periodic components.
-
-```julia
-using KernelFunctions
-
-# Matérn-5/2 sum (TemporalGPs-compatible; no PeriodicKernel)
-k = 15.0^2 * with_lengthscale(Matern52Kernel(), 1.0) +
-     5.0^2 * with_lengthscale(Matern52Kernel(), 2.0)
-
-result = disaggregate(GPKF(
-    kernel    = k,
-    obs_noise = 4.0,   # observation noise variance σ²
-    n_quad    = 5,     # GL quadrature points per interval
-), y, t1, t2)
-```
-
-| n | `GP` | `GPKF` | Speedup |
-|---|------|--------|---------|
-| 10 000 | ~2 s | ~25 ms | ~90× |
-| 100 000 | ~15 s | ~210 ms | ~70× |
-| 1 000 000 | skipped (18 GB) | ~2.4 s | — |
-
-**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
-
-![GPKF posterior mean and 2σ band](docs/images/gpkf_detail.png)
-
 ## Common Options
 
 ### Output Resolution
@@ -204,7 +174,7 @@ Weights combine with `loss_norm = :L1`: the IRLS weights are multiplied element-
 
 ![Per-observation weights: unweighted vs weighted spline](docs/images/weights_detail.png)
 
-> All four methods return the same type of `std`: a spatially-varying sandwich standard
+> All three methods return the same type of `std`: a spatially-varying sandwich standard
 > deviation `std(t*) = σ̂ · sqrt(q(t*))`, where `σ̂` is the weighted residual RMS of
 > predicted vs. observed interval averages and `q(t*)` is a dimensionless coverage factor.
 > `std` is lower where observations are dense and higher where they are sparse — giving an
@@ -276,11 +246,9 @@ Benchmarks: 20-year span, `output_period=Week(1)`, 8 threads (Julia 1.12). Time 
 | `Spline` | No kernel required; optional tension suppresses oscillation near sparse gaps | Design matrix O(n × n\_knots); can oscillate without tension | **12 ms**<br>19 MB | **103 ms**<br>192 MB | **807 ms**<br>1.9 GB |
 | `Sinusoid` | Analytical integrals (no quadrature); interpretable parameters (amplitude, phase, trend, anomalies); lowest peak memory | Assumes annual periodicity; poor fit for non-sinusoidal signals | **61 ms**<br>2 MB | **133 ms**<br>19 MB | **2.4 s**<br>192 MB |
 | `GP` | Arbitrary KernelFunctions.jl kernels; most flexible | O(n·m·q + m³) Cholesky — memory-limited above n ≈ 50 000 at weekly output | **2.0 s**<br>195 MB | **13.3 s**<br>1.9 GB | —<br>(>8 GB) |
-| `GPKF` | O(n·d²) Kalman filter; exact posterior (no inducing approximation); scales to n=1M | TemporalGPs-compatible kernels only; no `PeriodicKernel` | **24 ms**<br>1.2 MB | **241 ms**<br>12 MB | **2.3 s**<br>120 MB |
 
 ## Dependencies
 - [BasicBSpline.jl](https://github.com/hyrodium/BasicBSpline.jl) — B-spline basis evaluation (Spline method)
-- [AbstractGPs.jl](https://github.com/JuliaGaussianProcesses/AbstractGPs.jl) + [KernelFunctions.jl](https://github.com/JuliaGaussianProcesses/KernelFunctions.jl) — GP prior and kernel definitions (GP and GPKF methods)
-- [FastGaussQuadrature.jl](https://github.com/JuliaApproximation/FastGaussQuadrature.jl) — Gauss-Legendre quadrature (GP and GPKF methods)
-- [TemporalGPs.jl](https://github.com/JuliaGaussianProcesses/TemporalGPs.jl) — state-space GP via Kalman filtering (GPKF method)
+- [AbstractGPs.jl](https://github.com/JuliaGaussianProcesses/AbstractGPs.jl) + [KernelFunctions.jl](https://github.com/JuliaGaussianProcesses/KernelFunctions.jl) — GP prior and kernel definitions (GP method)
+- [FastGaussQuadrature.jl](https://github.com/JuliaApproximation/FastGaussQuadrature.jl) — Gauss-Legendre quadrature (GP method)
 - [DimensionalData.jl](https://github.com/rafaqz/DimensionalData.jl) — labelled array return type (all methods)
