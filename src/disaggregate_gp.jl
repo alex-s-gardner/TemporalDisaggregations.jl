@@ -33,10 +33,12 @@ function disaggregate(m::GP,
         order = sortperm(interval_start)
         t1    = yeardecimal.(interval_start[order])
         t2    = yeardecimal.(interval_end[order])
-        y     = Array(aggregate_values[order])
-        w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+        y     = aggregate_values[order]
+        w_obs = isnothing(weights) ? ones(n) : weights[order]
     else
-        w_obs = isnothing(weights) ? ones(n) : Float64.(weights[order])
+        t1 = yeardecimal.(interval_start)
+        t2 = yeardecimal.(interval_end)
+        w_obs = isnothing(weights) ? ones(n) : weights
     end
     w_obs ./= mean(w_obs)
 
