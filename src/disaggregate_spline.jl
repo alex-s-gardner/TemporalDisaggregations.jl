@@ -1,3 +1,15 @@
+function _spline_C_row!(C_norm, i, P_F, t1, t2, Δt, p_F)
+    inv_dt = 1.0 / Δt[i]
+    j1 = intervalindex(P_F, t1[i])
+    j2 = intervalindex(P_F, t2[i])
+    b1 = bsplinebasisall(P_F, j1, t1[i])
+    b2 = bsplinebasisall(P_F, j2, t2[i])
+    @inbounds for k in 0:p_F
+        C_norm[i, j1 + k] -= b1[k+1] * inv_dt
+        C_norm[i, j2 + k] += b2[k+1] * inv_dt
+    end
+end
+
 # Module-level solver — avoids a closure allocation on every disaggregate() call.
 function _spline_solve(A, b)
     try
@@ -83,22 +95,11 @@ function disaggregate(m::Spline,
     end
 
     # Observation matrix C_norm: C_norm[i,j] = (B_j(t2[i]) − B_j(t1[i])) / Δt[i]
-    # Built directly (avoids intermediate C matrix and a second n×n_basis allocation).
+    # Body in _spline_C_row! to avoid Julia 1.12 dynamic-scheduler closure-capture bug.
     Δt     = t2 .- t1
-    # bsplinebasisall returns all p+1 non-zero basis values at a point in one de Boor pass,
-    # replacing n_basis individual bsplinebasis calls (most of which returned 0).
-    # Parallel :static schedule is safe: each thread writes only to its own row i.
     C_norm = zeros(Float64, n, n_basis)
     Threads.@threads for i in 1:n
-        inv_dt = 1.0 / Δt[i]
-        j1 = intervalindex(P_F, t1[i])
-        j2 = intervalindex(P_F, t2[i])
-        b1 = bsplinebasisall(P_F, j1, t1[i])
-        b2 = bsplinebasisall(P_F, j2, t2[i])
-        @inbounds for k in 0:p_F
-            C_norm[i, j1 + k] -= b1[k+1] * inv_dt
-            C_norm[i, j2 + k] += b2[k+1] * inv_dt
-        end
+        _spline_C_row!(C_norm, i, P_F, t1, t2, Δt, p_F)
     end
 
     # P-spline penalty of order `penalty_order`: ‖Dᵣ a‖²

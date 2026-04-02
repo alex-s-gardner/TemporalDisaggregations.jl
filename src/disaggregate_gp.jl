@@ -1,3 +1,12 @@
+function _gp_C_row!(C, i, t1, t2, gl_nodes, kernel, Z, w, tq, Ci)
+    mid  = (t1[i] + t2[i]) / 2
+    half = (t2[i] - t1[i]) / 2
+    @. tq = mid + half * gl_nodes
+    Ktq  = kernelmatrix(kernel, tq, Z)
+    mul!(Ci, Ktq', w)
+    C[i, :] .= Ci
+end
+
 function disaggregate(m::GP,
                       aggregate_values::AbstractVector,
                       interval_start::AbstractVector{<:Dates.TimeType},
@@ -55,22 +64,15 @@ function disaggregate(m::GP,
     # ── Integral cross-kernel C [n × n_ind] ───────────────────────────────────
     # C[i, k] = (1/Δtᵢ) ∫_{t1ᵢ}^{t2ᵢ} k(t, Z[k]) dt  ≈  w' K(tq_i, Z)
     # Per-thread tq and Ci buffers avoid n × (tq alloc + mul-result alloc).
-    # Ci_buf is contiguous so the BLAS gemv writes to unit-stride memory;
-    # the strided copy into C[i,:] is then a single memcpy-like pass.
-    nt       = Threads.maxthreadid()         # covers all thread pools (default + interactive)
-    tq_bufs  = [Vector{Float64}(undef, m.n_quad) for _ in 1:nt]
-    Ci_bufs  = [Vector{Float64}(undef, n_ind)    for _ in 1:nt]
+    # Body extracted into _gp_C_row! to avoid Julia 1.12 dynamic-scheduler
+    # closure-capture bug where loop-local variables are not reliably captured.
+    nt      = Threads.maxthreadid()
+    tq_bufs = [Vector{Float64}(undef, m.n_quad) for _ in 1:nt]
+    Ci_bufs = [Vector{Float64}(undef, n_ind)    for _ in 1:nt]
     C = Matrix{Float64}(undef, n, n_ind)
     Threads.@threads for i in 1:n
-        tid  = Threads.threadid()
-        tq   = tq_bufs[tid]
-        Ci   = Ci_bufs[tid]
-        mid  = (t1[i] + t2[i]) / 2
-        half = (t2[i] - t1[i]) / 2
-        @. tq = mid + half * gl_nodes
-        Ktq  = kernelmatrix(m.kernel, tq, Z)   # [n_quad × n_ind]
-        mul!(Ci, Ktq', w)
-        C[i, :] .= Ci
+        tid = Threads.threadid()
+        _gp_C_row!(C, i, t1, t2, gl_nodes, m.kernel, Z, w, tq_bufs[tid], Ci_bufs[tid])
     end
 
     # ── Kernel matrix at inducing points K [n_ind × n_ind] ───────────────────
