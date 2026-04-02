@@ -36,6 +36,7 @@ function disaggregate(m::GP,
         y     = aggregate_values[order]
         w_obs = isnothing(weights) ? ones(n) : weights[order]
     else
+        y = aggregate_values
         t1 = yeardecimal.(interval_start)
         t2 = yeardecimal.(interval_end)
         w_obs = isnothing(weights) ? ones(n) : weights
