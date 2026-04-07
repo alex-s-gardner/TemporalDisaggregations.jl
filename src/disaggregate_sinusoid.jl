@@ -93,18 +93,22 @@ function disaggregate(m::Sinusoid,
 
     # ── Weighted least-squares solve ──────────────────────────────────────────
     ε_irls = 1e-6 * (std(y) + 1e-10)
-    W_obs  = Diagonal(w_obs)
-    DᵀW    = D' * W_obs
-    θ      = (DᵀW * D + Λ) \ (DᵀW * y)          # L2 init
+    # Avoid Diagonal(w_obs) allocation: use broadcasting for row scaling
+    DᵀW    = D' .* w_obs'                          # (n_params × n) .* (1 × n)
+    Θ_mat  = Symmetric(DᵀW * D + Λ)
+    Θ_fact = cholesky(Θ_mat)                       # cache factorization for sandwich variance
+    θ      = Θ_fact \ (DᵀW * y)                    # L2 init
     w_irls = ones(n)                               # identity for L2; overwritten by L1/Huber
     if !(loss_norm isa L2DistLoss)
         for _ in 1:50
             r      = y .- D * θ
             # Compute IRLS weights via LossFunctions.jl
             w_irls = _irls_weights(r, loss_norm, ε_irls)
-            W_eff  = Diagonal(w_irls .* w_obs)
-            DᵀW_e  = D' * W_eff
-            θ_new  = (DᵀW_e * D + Λ) \ (DᵀW_e * y)
+            w_eff  = w_irls .* w_obs                   # combined weights (n,)
+            DᵀW_e  = D' .* w_eff'                      # (n_params × n) .* (1 × n)
+            Θ_mat  = Symmetric(DᵀW_e * D + Λ)
+            Θ_fact = cholesky(Θ_mat)                   # cache final factorization
+            θ_new  = Θ_fact \ (DᵀW_e * y)
             _irls_converged(θ_new, θ) && (θ = θ_new; break)
             θ = θ_new
         end
@@ -162,11 +166,10 @@ function disaggregate(m::Sinusoid,
 
     # Sandwich variance: std varies with observation density.
     # f(t*) = e(t*)' θ,  Var(f(t*)) = σ̂² ‖e(t*)' G‖²
-    # where G = Θ_inv D' √W_eff  and  Θ_inv = (D' W_eff D + Λ)⁻¹.
+    # where G = Θ_fact \ (D' √W_eff)  using cached factorization.
     n_out   = length(eval_times)
-    w_eff   = w_irls .* w_obs
-    Θ_mat   = D' * Diagonal(w_eff) * D + Λ
-    G       = inv(Θ_mat) * (D' * Diagonal(sqrt.(w_eff)))     # [n_params × n]
+    # Reuse cached Θ_fact from solve; avoid inv() by using solve
+    G       = Θ_fact \ (D' .* sqrt.(w_irls .* w_obs)')   # [n_params × n]
 
     # Columns of E corresponding to γ_yr_k: evaluate spline with unit vector in pos k
     E_γ = zeros(n_out, n_years)

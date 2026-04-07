@@ -93,6 +93,9 @@ function disaggregate(m::Spline,
     # bsplinebasisall returns all p+1 non-zero basis values at a point in one de Boor pass,
     # replacing n_basis individual bsplinebasis calls (most of which returned 0).
     # Parallel :static schedule is safe: each thread writes only to its own row i.
+    # Note: If disaggregate() is called inside Threads.@threads, this creates nested parallelism.
+    # BLAS operations (lines 131, 187, 203-209) may experience thread contention in that case.
+    # For optimal performance with external threading, use the batch API instead.
     C_norm = zeros(Float64, n, n_basis)
     Threads.@threads for i in 1:n
         inv_dt = 1.0 / Δt[i]
@@ -192,13 +195,11 @@ function disaggregate(m::Spline,
     # f(t*) = b(t*)' M_eff⁻¹ C_norm' W_eff y  →  Var(f(t*)) = σ̂² v' (C_norm' W_eff C_norm) v
     # where v = M_eff⁻¹ b(t*).  We exploit C_norm' W_eff C_norm = M_eff − λP = CWC_eff to
     # compute q_vec[k] = (CWC_eff V[:,k]) · V[:,k] without forming the n×n_out matrix C_norm*V.
-    # For L2, reuse C_w/CWC (w_irls=ones so w_eff=w_obs); for L1 use the IRLS final weights.
+    # For L2, reuse C_w/CWC (w_irls=ones so w_eff=w_obs); for L1/Huber reuse cached CWC_e from final IRLS iteration.
     if loss_norm isa L2DistLoss
         CWC_eff = CWC
     else
-        @. w_eff_i  = w_irls * w_obs
-        @. C_w_eff  = sqrt(w_eff_i) * C_norm
-        mul!(CWC_e, C_w_eff', C_w_eff)
+        # Reuse CWC_e computed in final IRLS iteration (w_eff_i, C_w_eff, CWC_e already cached)
         CWC_eff = CWC_e
     end
     M_eff    = CWC_eff + λ * P
@@ -353,8 +354,6 @@ function disaggregate(m::Spline,
         RHS = C_norm' * WY                 # one gemm
         A   = _batch_solve(M_fact, RHS)    # one multi-RHS triangular solve
         mul!(Signal, B_out', A)            # one gemm: n_eval × n_series
-        # Residuals = Y_ord - C_norm * A   [n × n_series]
-        Res = Y_ord - C_norm * A           # one gemm
         # Sandwich variance — q_vec is data-independent, compute once
         V        = _batch_solve(M_fact, B_out)   # n_basis × n_eval
         M_data_V = CWC * V
@@ -362,56 +361,114 @@ function disaggregate(m::Spline,
         q_mean   = mean(q_vec)
         q_scale  = q_mean > 1e-10 ? sqrt.(q_vec ./ q_mean) : ones(n_eval)
         w_sum    = sum(w_obs)
+        # Compute residuals per-column to avoid n × n_series allocation
+        r_j_buffer = Vector{Float64}(undef, n)
         for j in 1:n_series
-            r_j     = view(Res, :, j)
-            std_val = sqrt(dot(w_obs, r_j .^ 2) / w_sum)
-            Std[:, j] = std_val .* q_scale
+            mul!(r_j_buffer, C_norm, view(A, :, j))
+            r_j_buffer .= view(Y_ord, :, j) .- r_j_buffer
+            std_val = sqrt(dot(w_obs, r_j_buffer .^ 2) / w_sum)
+            Std[:, j] .= std_val .* q_scale
         end
 
     else  # :L1 or :Huber
-        # ── Per-series IRLS, sharing C_norm / P / B_out ───────────────────────
-        # Allocate IRLS buffers once, reuse across series
-        w_eff_i  = Vector{Float64}(undef, n)
-        C_w_eff  = Matrix{Float64}(undef, n, n_basis)
-        CWC_e    = Matrix{Float64}(undef, n_basis, n_basis)
-        A_irls   = Matrix{Float64}(undef, n_basis, n_basis)
-        rhs_irls = Vector{Float64}(undef, n_basis)
-        r        = Vector{Float64}(undef, n)
-        w_irls   = ones(n)
+        # ── Batch IRLS with averaged weights (Phase 4 optimization) ──────────
+        # Strategy: Use average weights across series to build shared system matrix,
+        # reducing factorizations from (n_series × iters) to (1 × iters).
+        # Trades perfect per-series weights for speed; accurate when series have
+        # similar data quality and outlier patterns.
+
+        # Allocate for all series
+        W_irls = ones(n, n_series)        # IRLS weights for each series
+        A_all  = zeros(n_basis, n_series) # Solutions
+        R_all  = zeros(n, n_series)       # Residuals
+        ε_vec  = Vector{Float64}(undef, n_series)  # Convergence threshold per series
+
+        # Warm-start from L2 solution
+        WY = w_obs .* Y_ord
+        RHS_all = C_norm' * WY
+        A_all = _batch_solve(M_fact, RHS_all)
+        mul!(R_all, C_norm, A_all)
+        R_all .= Y_ord .- R_all
+
+        # Compute per-series convergence thresholds
         for j in 1:n_series
-            y_j    = view(Y_ord, :, j)
-            ε_irls = 1e-6 * (std(y_j) + 1e-10)
-            # warm-start from L2 solution
-            rhs_j  = C_norm' * (w_obs .* y_j)
-            a      = _batch_solve(M_fact, rhs_j)
-            fill!(w_irls, 1.0)
-            mul!(r, C_norm, a); @. r = y_j - r
-            for _ in 1:50
-                # Compute IRLS weights via LossFunctions.jl
-                w_irls = _irls_weights(r, loss_norm, ε_irls)
-                @. w_eff_i = w_irls * w_obs
-                @. C_w_eff = sqrt(w_eff_i) * C_norm
-                mul!(CWC_e, C_w_eff', C_w_eff)
-                @. A_irls  = CWC_e + λ * P
-                @. w_eff_i = w_eff_i * y_j   # reuse as w_eff_y
-                mul!(rhs_irls, C_norm', w_eff_i)
-                a_new = _spline_solve(A_irls, rhs_irls)
-                mul!(r, C_norm, a_new); @. r = y_j - r
-                _irls_converged(a_new, a) && (a = a_new; break)
-                a = a_new
+            ε_vec[j] = 1e-6 * (std(view(Y_ord, :, j)) + 1e-10)
+        end
+
+        # Shared buffers for batch IRLS
+        w_irls_avg = Vector{Float64}(undef, n)
+        w_eff_avg  = Vector{Float64}(undef, n)
+        C_w_avg    = Matrix{Float64}(undef, n, n_basis)
+        CWC_avg    = Matrix{Float64}(undef, n_basis, n_basis)
+        A_avg      = Matrix{Float64}(undef, n_basis, n_basis)
+        WY_buffer  = Matrix{Float64}(undef, n, n_series)  # For fused broadcast (avoid temporaries)
+
+        # Batch IRLS: shared factorization, per-series RHS
+        for iter in 1:50
+            # Compute IRLS weights for each series
+            for j in 1:n_series
+                W_irls[:, j] = _irls_weights(view(R_all, :, j), loss_norm, ε_vec[j])
             end
-            mul!(view(Signal, :, j), B_out', a)
-            # Per-series sandwich variance (CWC_eff depends on final w_irls)
-            @. w_eff_i = w_irls * w_obs     # restore (was overwritten above)
+
+            # Average weights across series (key approximation for speed)
+            w_irls_avg .= vec(mean(W_irls, dims=2))
+            w_eff_avg  .= w_irls_avg .* w_obs
+
+            # Build shared system matrix using average weights (one factorization)
+            @. C_w_avg = sqrt(w_eff_avg) * C_norm
+            mul!(CWC_avg, C_w_avg', C_w_avg)
+            @. A_avg = CWC_avg + λ * P
+
+            # Batch solve: one factorization, multiple RHS (per-series weights for RHS)
+            # Element-wise with pre-allocated buffer to avoid intermediate allocation
+            # (was: WY_irls = (W_irls .* w_obs) .* Y_ord, which created n×n_series temporary)
+            for j in 1:n_series
+                @views @. WY_buffer[:, j] = W_irls[:, j] * w_obs * Y_ord[:, j]
+            end
+            RHS_all_irls = C_norm' * WY_buffer
+            # Use _spline_solve which handles factorization and fallback
+            A_all_new = _spline_solve(Symmetric(A_avg), RHS_all_irls)
+
+            # Update residuals
+            mul!(R_all, C_norm, A_all_new)
+            R_all .= Y_ord .- R_all
+
+            # Check convergence (all series must converge)
+            max_change = 0.0
+            for j in 1:n_series
+                change = maximum(abs.(view(A_all_new, :, j) .- view(A_all, :, j))) /
+                         (norm(view(A_all, :, j)) + 1e-10)
+                max_change = max(max_change, change)
+            end
+
+            if max_change < 1e-8
+                A_all = A_all_new
+                break
+            end
+            A_all = A_all_new
+        end
+
+        # Evaluate on output grid
+        mul!(Signal, B_out', A_all)
+
+        # Per-series sandwich variance (use final per-series weights for accuracy)
+        w_eff_i = Vector{Float64}(undef, n)
+        C_w_eff = Matrix{Float64}(undef, n, n_basis)
+        CWC_e   = Matrix{Float64}(undef, n_basis, n_basis)
+        w_sum   = sum(w_obs)
+
+        for j in 1:n_series
+            w_irls_j = view(W_irls, :, j)
+            @. w_eff_i = w_irls_j * w_obs
             @. C_w_eff = sqrt(w_eff_i) * C_norm
             mul!(CWC_e, C_w_eff', C_w_eff)
-            M_eff_j  = CWC_e + λ * P
-            V_j      = _spline_solve(M_eff_j, B_out)
-            Mdv_j    = CWC_e * V_j
-            q_vec_j  = [max(0.0, dot(view(Mdv_j, :, k), view(V_j, :, k))) for k in 1:n_eval]
+            M_eff_j = CWC_e + λ * P
+            V_j     = _spline_solve(M_eff_j, B_out)
+            Mdv_j   = CWC_e * V_j
+            q_vec_j = [max(0.0, dot(view(Mdv_j, :, k), view(V_j, :, k))) for k in 1:n_eval]
             q_mean_j = mean(q_vec_j)
-            w_sum    = sum(w_obs)
-            std_val  = sqrt(dot(w_irls .* w_obs, r .^ 2) / w_sum)
+            r_j     = view(R_all, :, j)
+            std_val = sqrt(dot(w_eff_i, r_j .^ 2) / w_sum)
             Std[:, j] = q_mean_j > 1e-10 ?
                 std_val .* sqrt.(q_vec_j ./ q_mean_j) : fill(std_val, n_eval)
         end
