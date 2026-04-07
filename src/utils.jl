@@ -110,6 +110,65 @@ Return `true` when the relative change `‖x_new − x‖∞ / (‖x‖ + 1e-10)
 _irls_converged(x_new, x, tol=1e-8) =
     maximum(abs.(x_new .- x)) / (norm(x) + 1e-10) < tol
 
+"""
+    _cg_solve(A, b, L_precond; v_init=nothing, tol=1e-10, maxiter=100)
+
+Solve `Av = b` using preconditioned conjugate gradient with Cholesky factor `L_precond` as preconditioner.
+
+This is used in GP IRLS warm-starting to reuse the Cholesky factorization from a previous
+IRLS iteration as a preconditioner, avoiding expensive full refactorization at each step.
+
+# Arguments
+- `A::Symmetric`: SPD system matrix (used via matrix-vector product)
+- `b::AbstractVector`: Right-hand side vector
+- `L_precond::Cholesky`: Cholesky factorization to use as preconditioner
+- `v_init=nothing`: Initial guess (warm start)
+- `tol=1e-10`: Convergence tolerance (relative residual norm)
+- `maxiter=100`: Maximum CG iterations
+
+# Returns
+Solution vector `v` such that `Av ≈ b`
+
+# Algorithm
+Preconditioned conjugate gradient with preconditioner M⁻¹ = L⁻ᵀL⁻¹ where L is the Cholesky factor.
+Converges in ~5-10 iterations when the preconditioner is close to A.
+"""
+function _cg_solve(A::Symmetric, b::AbstractVector, L_precond::Cholesky;
+                   v_init=nothing, tol=1e-10, maxiter=100, verbose=false)
+    n = length(b)
+    v = isnothing(v_init) ? zeros(n) : copy(v_init)
+    r = b - A * v
+    z = L_precond \ r
+    p = copy(z)
+    rsold = dot(r, z)
+
+    norm_b = norm(b)
+    initial_res = norm(r)
+
+    for iter in 1:maxiter
+        Ap = A * p
+        α = rsold / dot(p, Ap)
+        v .+= α .* p
+        r .-= α .* Ap
+
+        # Check convergence
+        res_norm = norm(r)
+        if res_norm < tol * norm_b
+            verbose && println("  CG converged in $iter iterations (residual: $(res_norm/norm_b))")
+            return v
+        end
+
+        z = L_precond \ r
+        rsnew = dot(r, z)
+        β = rsnew / rsold
+        p .= z .+ β .* p
+        rsold = rsnew
+    end
+
+    verbose && @warn "CG did not converge in $maxiter iterations (residual: $(norm(r)/norm_b), initial: $(initial_res/norm_b))"
+    return v
+end
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Post-processing helpers
 # ─────────────────────────────────────────────────────────────────────────────
