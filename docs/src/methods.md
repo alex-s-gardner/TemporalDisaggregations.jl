@@ -93,6 +93,22 @@ result = disaggregate(GP(
 
 ![GP posterior mean and 2σ band](./assets/gp_detail.png)
 
+## Robust Loss Functions
+
+TemporalDisaggregations.jl uses [LossFunctions.jl](https://github.com/JuliaML/LossFunctions.jl) for its robust loss implementations. Three loss types are currently supported:
+
+- `:L2` — Least squares (standard, no IRLS)
+- `:L1` — Absolute deviation (robust to outliers via IRLS)
+- `:Huber` — Hybrid loss (L2 for small residuals, L1 for large residuals)
+
+The Huber threshold `δ` can be customized via the method struct:
+
+```julia
+result = disaggregate(Spline(huber_delta=2.0), y, t1, t2; loss_norm=:Huber)
+```
+
+Under the hood, IRLS weights are computed as `w = 1 / (|∂L/∂r| + ε)` where `∂L/∂r` is provided by LossFunctions.jl's `deriv()` function.
+
 ## Uncertainty
 
 All three methods return the same type of `std` — a spatially-varying sandwich standard deviation:

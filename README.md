@@ -155,7 +155,7 @@ The `output_start` kwarg anchors the output grid. For `Month` steps, only the da
 
 ### Robust L1 Loss
 
-All methods support `loss_norm = :L1` for robustness to blunders (outliers). L1 loss down-weights suspicious observations automatically, without needing to identify them manually:
+All methods support `loss_norm = :L1` for robustness to blunders (outliers). L1 loss down-weights suspicious observations automatically, without needing to identify them manually. Implemented via Iteratively Reweighted Least Squares (IRLS) using the [LossFunctions.jl](https://github.com/JuliaML/LossFunctions.jl) package:
 
 ```julia
 result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = :L1)

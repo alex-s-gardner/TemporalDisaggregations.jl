@@ -35,8 +35,8 @@ function disaggregate(m::Spline,
         throw(ArgumentError("smoothness must be ≥ 0."))
     m.tension >= 0 ||
         throw(ArgumentError("tension must be ≥ 0."))
-    loss_norm ∈ (:L1, :L2) ||
-        throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
+    loss_norm ∈ (:L1, :L2, :Huber) ||
+        throw(ArgumentError("loss_norm must be :L1, :L2, or :Huber; got :$loss_norm."))
     if !isnothing(weights)
         length(weights) == n ||
             throw(DimensionMismatch("weights must have the same length as aggregate_values."))
@@ -133,12 +133,13 @@ function disaggregate(m::Spline,
     CWC    = C_w' * C_w
     λ      = m.smoothness * (norm(CWC) / n + 1e-10)
     a      = _spline_solve(CWC + λ * P, C_norm' * (w_obs .* aggregate_values))
-    w_irls = ones(n)                        # identity for L2; overwritten by L1
+    w_irls = ones(n)                        # identity for L2; overwritten by L1/Huber
 
-    # Pre-allocate residual; computed once for L2, updated each IRLS iteration for L1.
+    # Pre-allocate residual; computed once for L2, updated each IRLS iteration for L1/Huber.
     r = Vector{Float64}(undef, n)
-    if loss_norm == :L1
+    if loss_norm == :L1 || loss_norm == :Huber
         # Pre-allocate IRLS buffers outside the loop — mirrors GP method pattern.
+        loss = _make_loss(loss_norm, m.huber_delta)
         w_eff_i  = similar(w_obs)
         C_w_eff  = similar(C_norm)
         CWC_e    = Matrix{Float64}(undef, n_basis, n_basis)
@@ -147,7 +148,8 @@ function disaggregate(m::Spline,
         rhs_irls = Vector{Float64}(undef, n_basis)
         mul!(r, C_norm, a); @. r = aggregate_values - r
         for _ in 1:50
-            @. w_irls  = 1.0 / (abs(r) + ε_irls)
+            # Compute IRLS weights via LossFunctions.jl
+            w_irls = _irls_weights(r, loss, ε_irls)
             @. w_eff_i = w_irls * w_obs
             @. C_w_eff = sqrt(w_eff_i) * C_norm   # row-broadcast: (n,) × (n,n_basis)
             mul!(CWC_e, C_w_eff', C_w_eff)
@@ -262,8 +264,8 @@ function disaggregate(m::Spline,
         throw(ArgumentError("Every interval must satisfy interval_end > interval_start."))
     m.smoothness >= 0 || throw(ArgumentError("smoothness must be ≥ 0."))
     m.tension    >= 0 || throw(ArgumentError("tension must be ≥ 0."))
-    loss_norm ∈ (:L1, :L2) ||
-        throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
+    loss_norm ∈ (:L1, :L2, :Huber) ||
+        throw(ArgumentError("loss_norm must be :L1, :L2, or :Huber; got :$loss_norm."))
     if !isnothing(weights)
         length(weights) == n ||
             throw(DimensionMismatch("weights must have length $n (one per observation row)."))
@@ -371,7 +373,7 @@ function disaggregate(m::Spline,
             Std[:, j] = std_val .* q_scale
         end
 
-    else  # :L1
+    else  # :L1 or :Huber
         # ── Per-series IRLS, sharing C_norm / P / B_out ───────────────────────
         # Allocate IRLS buffers once, reuse across series
         w_eff_i  = Vector{Float64}(undef, n)
@@ -381,6 +383,7 @@ function disaggregate(m::Spline,
         rhs_irls = Vector{Float64}(undef, n_basis)
         r        = Vector{Float64}(undef, n)
         w_irls   = ones(n)
+        loss = _make_loss(loss_norm, m.huber_delta)
         for j in 1:n_series
             y_j    = view(Y_ord, :, j)
             ε_irls = 1e-6 * (std(y_j) + 1e-10)
@@ -390,7 +393,8 @@ function disaggregate(m::Spline,
             fill!(w_irls, 1.0)
             mul!(r, C_norm, a); @. r = y_j - r
             for _ in 1:50
-                @. w_irls  = 1.0 / (abs(r) + ε_irls)
+                # Compute IRLS weights via LossFunctions.jl
+                w_irls = _irls_weights(r, loss, ε_irls)
                 @. w_eff_i = w_irls * w_obs
                 @. C_w_eff = sqrt(w_eff_i) * C_norm
                 mul!(CWC_e, C_w_eff', C_w_eff)

@@ -71,7 +71,7 @@ DimStack(
 
 - `src/disaggregate_gp.jl` — `disaggregate(m::GP, ...)`. Sparse inducing-point GP (DTC approximation); inducing grid is 2× finer than `output_period` (floored at `Day(1)`). Uses Gauss-Legendre quadrature (`FastGaussQuadrature`) to build the integral cross-kernel matrix via `Threads.@threads` (use `--threads=auto` for best performance). Matrix inversion lemma avoids forming the n×n observation covariance. Always krigs from the inducing grid to the output grid.
 
-**Shared L1/L2 loss:** All three methods implement optional L1 loss via IRLS (max 50 iterations, tolerance 1e-8 infinity-norm on relative weight change). `loss_norm` is a shared function kwarg.
+**Shared L1/L2/Huber loss:** All three methods implement optional L1 and Huber loss via IRLS (max 50 iterations, tolerance 1e-8 infinity-norm on relative weight change) using the [LossFunctions.jl](https://github.com/JuliaML/LossFunctions.jl) package. IRLS weights are computed as `w = 1 / (|∂L/∂r| + ε)` where `∂L/∂r = deriv(loss, r)`. `loss_norm` is a shared function kwarg.
 
 **`std` semantics are identical across all methods**: spatially-varying sandwich std
 `std(t*) = σ̂ · sqrt(q(t*))` where `σ̂` is the weighted residual RMS and `q(t*)` is a

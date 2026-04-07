@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "54810e119597d7ee9d8bb2fc904151f81a6deb51"
+project_hash = "73bf3b3df4f2d82094aecbd810d11752dc6e1490"
 
 [[deps.ANSIColoredPrinters]]
 git-tree-sha1 = "574baf8110975760d391c710b6341da1afa48d8c"
@@ -104,17 +104,6 @@ weakdeps = ["ChainRulesCore", "RecipesBase"]
     [deps.BasicBSpline.extensions]
     BasicBSplineChainRulesCoreExt = "ChainRulesCore"
     BasicBSplineRecipesBaseExt = "RecipesBase"
-
-[[deps.Bessels]]
-git-tree-sha1 = "4435559dc39793d53a9e3d278e185e920b4619ef"
-uuid = "0e736298-9ec6-45e8-9647-e4fc86a2fe38"
-version = "0.2.8"
-
-[[deps.BlockDiagonals]]
-deps = ["ChainRulesCore", "FillArrays", "FiniteDifferences", "LinearAlgebra"]
-git-tree-sha1 = "920d3775e35c519a2aced9e7bbe9ac61218eeead"
-uuid = "0a1fb500-61f7-11e9-3c65-f5ef3456f9f0"
-version = "0.1.42"
 
 [[deps.Bzip2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
@@ -499,12 +488,6 @@ weakdeps = ["PDMats", "SparseArrays", "StaticArrays", "Statistics"]
     FillArraysSparseArraysExt = "SparseArrays"
     FillArraysStaticArraysExt = "StaticArrays"
     FillArraysStatisticsExt = "Statistics"
-
-[[deps.FiniteDifferences]]
-deps = ["ChainRulesCore", "LinearAlgebra", "Printf", "Random", "Richardson", "SparseArrays", "StaticArrays"]
-git-tree-sha1 = "0ff4ed4351e1884beff16fc4d54490c6d56b2199"
-uuid = "26cc04aa-876d-5657-8c51-4c34ba976000"
-version = "0.12.33"
 
 [[deps.FixedPointNumbers]]
 deps = ["Statistics"]
@@ -976,6 +959,18 @@ version = "0.3.29"
 uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 version = "1.11.0"
 
+[[deps.LossFunctions]]
+deps = ["Markdown", "Requires", "Statistics"]
+git-tree-sha1 = "8073538845227d3acf8a0c149bf0e150e60d0ced"
+uuid = "30fc2ffe-d236-52d8-8643-a9d8f7c094a7"
+version = "0.11.2"
+
+    [deps.LossFunctions.extensions]
+    LossFunctionsCategoricalArraysExt = "CategoricalArrays"
+
+    [deps.LossFunctions.weakdeps]
+    CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
+
 [[deps.MacroTools]]
 git-tree-sha1 = "1e0228a030642014fe5cfe68c2c0a818f9e3f522"
 uuid = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
@@ -1315,12 +1310,6 @@ git-tree-sha1 = "62389eeff14780bfe55195b7204c0d8738436d64"
 uuid = "ae029012-a4dd-5104-9daa-d747884805df"
 version = "1.3.1"
 
-[[deps.Richardson]]
-deps = ["LinearAlgebra"]
-git-tree-sha1 = "48f038bfd83344065434089c2a79417f38715c41"
-uuid = "708f8203-808e-40c0-ba2d-98a6953ed40d"
-version = "1.4.2"
-
 [[deps.Rmath]]
 deps = ["Random", "Rmath_jll"]
 git-tree-sha1 = "5b3d50eb374cea306873b371d3f8d3915a018f0b"
@@ -1556,7 +1545,7 @@ uuid = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
 version = "1.10.0"
 
 [[deps.TemporalDisaggregation]]
-deps = ["AbstractGPs", "BasicBSpline", "CairoMakie", "DateFormats", "Dates", "DimensionalData", "DocumenterTools", "FastGaussQuadrature", "KernelFunctions", "LinearAlgebra", "Statistics", "TemporalGPs"]
+deps = ["AbstractGPs", "BasicBSpline", "CairoMakie", "DateFormats", "Dates", "DimensionalData", "DocumenterTools", "FastGaussQuadrature", "KernelFunctions", "LinearAlgebra", "LossFunctions", "Statistics"]
 path = "."
 uuid = "88cf798b-2db9-4742-8b85-510f6e476edb"
 version = "0.0.1"
@@ -1568,12 +1557,6 @@ version = "0.0.1"
     [deps.TemporalDisaggregation.weakdeps]
     AppleAccelerate = "13e28ba4-7ad8-5781-acae-3021b1ed3924"
     MKL = "33e6dc65-8f57-5167-99aa-e5a354878fb2"
-
-[[deps.TemporalGPs]]
-deps = ["AbstractGPs", "Bessels", "BlockDiagonals", "FillArrays", "KernelFunctions", "LinearAlgebra", "Random", "StaticArrays", "StructArrays"]
-git-tree-sha1 = "095c9c7becd58ef9eb344db32e8c0d03c2259035"
-uuid = "e155a3c4-0841-43e1-8b83-a0e4f03cc18f"
-version = "0.7.3"
 
 [[deps.TensorCore]]
 deps = ["LinearAlgebra"]
