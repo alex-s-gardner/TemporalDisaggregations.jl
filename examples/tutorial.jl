@@ -15,6 +15,7 @@ using Dates
 using Statistics
 using Random
 using Printf
+using LossFunctions
 
 Random.seed!(42)
 
@@ -384,9 +385,9 @@ println("Saved fig5_gp_kernels.png")
 # ─────────────────────────────────────────────────────────────────────────────
 # Section 7 — Figure 6: L1 vs L2 robustness to blunders
 # ─────────────────────────────────────────────────────────────────────────────
-# loss_norm = :L2 (default): ordinary least squares — blunders pull the
+# loss_norm = L2DistLoss() (default): ordinary least squares — blunders pull the
 #   reconstruction off truth.
-# loss_norm = :L1: Iteratively Reweighted Least Squares (IRLS) — automatically
+# loss_norm = L1DistLoss(): Iteratively Reweighted Least Squares (IRLS) — automatically
 #   down-weights gross outliers.  Works with any method.
 
 println("\n── Figure 6: L1 vs L2 blunder suppression ──")
@@ -404,9 +405,9 @@ blunder_idx = sort(randperm(n_large)[1:round(Int, 0.05 * n_large)])
 y_blundered[blunder_idx] .+= 5 * std(y_large)
 
 r_l2 = disaggregate(Spline(), y_blundered, t1_large, t2_large;
-                     loss_norm = :L2)
+                     loss_norm = L2DistLoss())
 r_l1 = disaggregate(Spline(), y_blundered, t1_large, t2_large;
-                     loss_norm = :L1)
+                     loss_norm = L1DistLoss())
 
 t_bl   = t_axis(r_l2)
 l2_μ   = r_l2.signal.data;  l2_σ  = r_l2.std.data

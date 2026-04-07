@@ -79,10 +79,12 @@ result = disaggregate(Spline(), y, t1, t2; output_start = Date(2020, 1, 15))
 
 ## Robust L1 Loss
 
-All methods support `loss_norm = :L1` for robustness to outliers:
+All methods support robust losses for outlier resistance. Import loss types from LossFunctions.jl:
 
 ```julia
-result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = :L1)
+using LossFunctions
+result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = L1DistLoss())
+result = disaggregate(Spline(), y, t1, t2; loss_norm = HuberLoss(1.5))
 ```
 
 L1 loss automatically down-weights suspicious observations via IRLS.

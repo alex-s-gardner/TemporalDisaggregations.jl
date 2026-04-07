@@ -9,6 +9,7 @@ module TemporalDisaggregations
     using FastGaussQuadrature
     using DimensionalData: DimStack, DimArray, Ti, dims
     import DateFormats: yeardecimal
+    using LossFunctions
 
     include("utils.jl")
     include("methods.jl")

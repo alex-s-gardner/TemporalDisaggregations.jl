@@ -1,5 +1,7 @@
 using Dates
 using LinearAlgebra
+using LossFunctions: L1DistLoss, L2DistLoss, HuberLoss, deriv
+using LossFunctions.Traits: DistanceLoss
 
 """
     _date_grid(start::Dates.TimeType, stop::Dates.TimeType, step::Dates.Period)
@@ -75,11 +77,30 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    _irls_weights(residuals, ε)
+    _irls_weights(r, loss, ε)
 
-Return per-observation IRLS weights `1 / (|r| + ε)`.
+Compute IRLS weights for robust loss function via `w = 1 / (|∂L/∂r| + ε)`.
+
+The weight is the reciprocal of the loss derivative magnitude, which implements
+Iteratively Reweighted Least Squares (IRLS) for robust regression.
+
+# Arguments
+- `r::AbstractVector`: Residual vector
+- `loss::DistanceLoss`: Loss function from LossFunctions.jl
+- `ε::Float64`: Regularization parameter to prevent division by zero
+
+# Returns
+Vector of IRLS weights
+
+# Examples
+For L1 loss (L1DistLoss), deriv = sign(r), so w ≈ 1 for all r.
+For L2 loss (L2DistLoss), deriv = r, so w = 1 / (|r| + ε).
+For Huber loss, deriv is piecewise: r for |r| ≤ δ, δ·sign(r) for |r| > δ.
 """
-_irls_weights(r::AbstractVector, ε::Float64) = @. 1.0 / (abs(r) + ε)
+function _irls_weights(r::AbstractVector, loss::DistanceLoss, ε::Float64)
+    derivs = deriv.(Ref(loss), r)
+    return @. 1.0 / (abs(derivs) + ε)
+end
 
 """
     _irls_converged(x_new, x, tol=1e-8)

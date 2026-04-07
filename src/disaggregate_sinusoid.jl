@@ -34,7 +34,7 @@ function disaggregate(m::Sinusoid,
                       aggregate_values::AbstractVector,
                       interval_start::AbstractVector{<:Dates.TimeType},
                       interval_end::AbstractVector{<:Dates.TimeType};
-                      loss_norm::Symbol            = :L2,
+                      loss_norm::DistanceLoss      = L2DistLoss(),
                       output_period::Dates.Period  = Month(1),
                       output_start::Union{Dates.TimeType,Nothing} = nothing,
                       output_end::Union{Dates.TimeType,Nothing} = nothing,
@@ -47,8 +47,6 @@ function disaggregate(m::Sinusoid,
     any(interval_end .<= interval_start) &&
         throw(ArgumentError(
             "Every interval must satisfy interval_end > interval_start."))
-    loss_norm ∈ (:L1, :L2) ||
-        throw(ArgumentError("loss_norm must be :L1 or :L2; got :$loss_norm."))
     if !isnothing(weights)
         length(weights) == n ||
             throw(DimensionMismatch("weights must have the same length as aggregate_values."))
@@ -98,11 +96,12 @@ function disaggregate(m::Sinusoid,
     W_obs  = Diagonal(w_obs)
     DᵀW    = D' * W_obs
     θ      = (DᵀW * D + Λ) \ (DᵀW * y)          # L2 init
-    w_irls = ones(n)                               # identity for L2; overwritten by L1
-    if loss_norm == :L1
+    w_irls = ones(n)                               # identity for L2; overwritten by L1/Huber
+    if !(loss_norm isa L2DistLoss)
         for _ in 1:50
             r      = y .- D * θ
-            @. w_irls = 1.0 / (abs(r) + ε_irls)
+            # Compute IRLS weights via LossFunctions.jl
+            w_irls = _irls_weights(r, loss_norm, ε_irls)
             W_eff  = Diagonal(w_irls .* w_obs)
             DᵀW_e  = D' * W_eff
             θ_new  = (DᵀW_e * D + Λ) \ (DᵀW_e * y)
@@ -189,7 +188,7 @@ function disaggregate(m::Sinusoid,
         metadata = Dict(
             :method                 => :sinusoid,
             :smoothness_interannual => m.smoothness_interannual,
-            :loss_norm              => loss_norm,
+            :loss_norm              => string(loss_norm),
             :output_period          => output_period,
             :mean                   => μ_fit,
             :trend                  => β_fit,

@@ -34,7 +34,7 @@ This is a Julia package that reconstructs instantaneous time series from interva
 
 **Exports:** `disaggregate`, `yeardecimal`, `interval_average`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`.
 
-**Public API:** `disaggregate(method::DisaggregationMethod, aggregate_values, interval_start, interval_end; loss_norm=:L2, output_period=Month(1), output_start=nothing, output_end=nothing, weights=nothing)` — dispatches on the algorithm struct type. Method-specific parameters live in the struct; shared kwargs (`loss_norm`, `output_period`, `output_start`, `output_end`, `weights`) stay as function kwargs. `weights` is a length-n vector of positive per-observation weights (e.g. `1 ./ σ²_obs`); for `:L1` loss they are multiplied element-wise with the IRLS weights.
+**Public API:** `disaggregate(method::DisaggregationMethod, aggregate_values, interval_start, interval_end; loss_norm=L2DistLoss(), output_period=Month(1), output_start=nothing, output_end=nothing, weights=nothing)` — dispatches on the algorithm struct type. Method-specific parameters live in the struct; shared kwargs (`loss_norm`, `output_period`, `output_start`, `output_end`, `weights`) stay as function kwargs. `weights` is a length-n vector of positive per-observation weights (e.g. `1 ./ σ²_obs`); for robust losses they are multiplied element-wise with the IRLS weights.
 
 **Algorithm structs** (`src/methods.jl`):
 ```julia
@@ -71,12 +71,12 @@ DimStack(
 
 - `src/disaggregate_gp.jl` — `disaggregate(m::GP, ...)`. Sparse inducing-point GP (DTC approximation); inducing grid is 2× finer than `output_period` (floored at `Day(1)`). Uses Gauss-Legendre quadrature (`FastGaussQuadrature`) to build the integral cross-kernel matrix via `Threads.@threads` (use `--threads=auto` for best performance). Matrix inversion lemma avoids forming the n×n observation covariance. Always krigs from the inducing grid to the output grid.
 
-**Shared L1/L2 loss:** All three methods implement optional L1 loss via IRLS (max 50 iterations, tolerance 1e-8 infinity-norm on relative weight change). `loss_norm` is a shared function kwarg.
+**Robust loss functions:** All three methods support any `DistanceLoss` from [LossFunctions.jl](https://github.com/JuliaML/LossFunctions.jl) via the `loss_norm` kwarg. For losses other than `L2DistLoss()`, IRLS is used (max 50 iterations, tolerance 1e-8). IRLS weights: `w = 1 / (|∂L/∂r| + ε)` where `∂L/∂r = deriv(loss, r)`. Common choices: `L1DistLoss()` (robust to outliers), `HuberLoss(δ)` (hybrid), `L2DistLoss()` (standard LS).
 
 **`std` semantics are identical across all methods**: spatially-varying sandwich std
 `std(t*) = σ̂ · sqrt(q(t*))` where `σ̂` is the weighted residual RMS and `q(t*)` is a
 dimensionless coverage factor (lower in dense regions, higher in sparse regions).
-When using `loss_norm = :L1`, computed from the final IRLS solution.
+When using robust losses (non-L2), computed from the final IRLS solution.
 
 ## Helper functions (`src/utils.jl`)
 
