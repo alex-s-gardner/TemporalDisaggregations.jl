@@ -6,7 +6,9 @@ function disaggregate(m::GP,
                       output_period::Dates.Period = Month(1),
                       output_start::Union{Dates.TimeType,Nothing} = nothing,
                       output_end::Union{Dates.TimeType,Nothing} = nothing,
-                      weights::Union{AbstractVector,Nothing} = nothing)
+                      weights::Union{AbstractVector,Nothing} = nothing,
+                      irls_tol::Float64 = 1e-8,
+                      irls_max_iter::Int = 50)
 
     σ²  = m.obs_noise
     n   = length(aggregate_values)
@@ -25,8 +27,11 @@ function disaggregate(m::GP,
         all(>(0), weights) ||
             throw(ArgumentError("All weights must be positive."))
     end
+    irls_tol > 0 ||
+        throw(ArgumentError("irls_tol must be positive."))
+    irls_max_iter >= 1 ||
+        throw(ArgumentError("irls_max_iter must be >= 1."))
 
-    
     if !issorted(interval_start)
         order = sortperm(interval_start)
         t1    = yeardecimal.(interval_start[order])
@@ -93,7 +98,7 @@ function disaggregate(m::GP,
     if !(loss_norm isa L2DistLoss)
         ε_irls = 1e-6 * (std(y) + 1e-10)
         w_irls = ones(n)
-        for _ in 1:50
+        for _ in 1:irls_max_iter
             W_eff      = Diagonal(w_irls .* w_obs)
             S_W        = C' * W_eff * C
             M_W        = Symmetric(K .* σ² .+ S_W)
@@ -104,7 +109,7 @@ function disaggregate(m::GP,
             r          = y .- C * v
             # Compute IRLS weights via LossFunctions.jl
             w_irls = _irls_weights(r, loss_norm, ε_irls)
-            _irls_converged(μ_Z_new, μ_Z) && (μ_Z = μ_Z_new; break)
+            _irls_converged(μ_Z_new, μ_Z, irls_tol) && (μ_Z = μ_Z_new; break)
             μ_Z = μ_Z_new
         end
     end

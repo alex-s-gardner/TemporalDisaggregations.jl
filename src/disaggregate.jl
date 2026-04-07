@@ -1,7 +1,7 @@
 """
     disaggregate(method, aggregate_values, interval_start, interval_end;
                  loss_norm=L2DistLoss(), output_period=Month(1), output_start=nothing,
-                 output_end=nothing, weights=nothing)
+                 output_end=nothing, weights=nothing, irls_tol=1e-8, irls_max_iter=50)
 
 Reconstruct an instantaneous time series from interval-averaged observations.
 
@@ -23,6 +23,14 @@ Reconstruct an instantaneous time series from interval-averaged observations.
 - `weights`: Optional vector of n positive per-observation weights (e.g. `1 ./ σ²`).
   `nothing` (default) uses uniform weights. For robust losses (L1, Huber), these are
   multiplied element-wise with the IRLS weights at each iteration.
+- `irls_tol::Float64 = 1e-8`: Convergence tolerance for IRLS iterations (only used for
+  non-L2 losses). Smaller values (e.g., 1e-10) give more accurate solutions but take
+  longer; larger values (e.g., 1e-6) converge faster but may be less accurate. The
+  tolerance controls the relative parameter change: iterations stop when
+  `max(|x_new - x|) / (‖x‖ + 1e-10) < irls_tol`.
+- `irls_max_iter::Int = 50`: Maximum number of IRLS iterations (only used for non-L2
+  losses). Increase if IRLS does not converge within 50 iterations for difficult problems;
+  decrease for faster (but potentially less accurate) solutions.
 
 # Returns
 `DimStack` with `:signal` and `:std` layers indexed by `Ti(dates)`.
@@ -42,6 +50,18 @@ result = disaggregate(Spline(), y, t1, t2; output_end=Date(2020, 6, 1))
 result = disaggregate(Spline(), y, t1, t2; weights = 1 ./ σ²_obs)
 result = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(1.345))
 result = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(2.0))
+
+# Fast L1 solution with looser tolerance (2-3× faster)
+result = disaggregate(Spline(), y, t1, t2; loss_norm=L1DistLoss(), irls_tol=1e-6)
+
+# High-precision L1 solution with tighter tolerance
+result = disaggregate(Spline(), y, t1, t2; loss_norm=L1DistLoss(), irls_tol=1e-10)
+
+# Fast L1 with fewer IRLS iterations (for very large problems)
+result = disaggregate(Spline(), y, t1, t2; loss_norm=L1DistLoss(), irls_max_iter=20)
+
+# More iterations for difficult convergence cases
+result = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(1.0), irls_max_iter=100)
 ```
 """
 function disaggregate end

@@ -38,7 +38,9 @@ function disaggregate(m::Sinusoid,
                       output_period::Dates.Period  = Month(1),
                       output_start::Union{Dates.TimeType,Nothing} = nothing,
                       output_end::Union{Dates.TimeType,Nothing} = nothing,
-                      weights::Union{AbstractVector,Nothing} = nothing)
+                      weights::Union{AbstractVector,Nothing} = nothing,
+                      irls_tol::Float64 = 1e-8,
+                      irls_max_iter::Int = 50)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -53,6 +55,10 @@ function disaggregate(m::Sinusoid,
         all(>(0), weights) ||
             throw(ArgumentError("All weights must be positive."))
     end
+    irls_tol > 0 ||
+        throw(ArgumentError("irls_tol must be positive."))
+    irls_max_iter >= 1 ||
+        throw(ArgumentError("irls_max_iter must be >= 1."))
 
     # Sort chronologically
     order = sortperm(interval_start)
@@ -98,14 +104,14 @@ function disaggregate(m::Sinusoid,
     θ      = (DᵀW * D + Λ) \ (DᵀW * y)          # L2 init
     w_irls = ones(n)                               # identity for L2; overwritten by L1/Huber
     if !(loss_norm isa L2DistLoss)
-        for _ in 1:50
+        for _ in 1:irls_max_iter
             r      = y .- D * θ
             # Compute IRLS weights via LossFunctions.jl
             w_irls = _irls_weights(r, loss_norm, ε_irls)
             W_eff  = Diagonal(w_irls .* w_obs)
             DᵀW_e  = D' * W_eff
             θ_new  = (DᵀW_e * D + Λ) \ (DᵀW_e * y)
-            _irls_converged(θ_new, θ) && (θ = θ_new; break)
+            _irls_converged(θ_new, θ, irls_tol) && (θ = θ_new; break)
             θ = θ_new
         end
     end

@@ -22,7 +22,9 @@ function disaggregate(m::Spline,
                       output_period::Dates.Period = Month(1),
                       output_start::Union{Dates.TimeType,Nothing} = nothing,
                       output_end::Union{Dates.TimeType,Nothing} = nothing,
-                      weights::Union{AbstractVector,Nothing} = nothing)
+                      weights::Union{AbstractVector,Nothing} = nothing,
+                      irls_tol::Float64 = 1e-8,
+                      irls_max_iter::Int = 50)
 
     n = length(aggregate_values)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -41,6 +43,10 @@ function disaggregate(m::Spline,
         all(>(0), weights) ||
             throw(ArgumentError("All weights must be positive."))
     end
+    irls_tol > 0 ||
+        throw(ArgumentError("irls_tol must be positive."))
+    irls_max_iter >= 1 ||
+        throw(ArgumentError("irls_max_iter must be >= 1."))
 
     # Sort intervals chronologically
     if !issorted(interval_start)
@@ -144,7 +150,8 @@ function disaggregate(m::Spline,
         w_eff_y  = similar(aggregate_values)
         rhs_irls = Vector{Float64}(undef, n_basis)
         mul!(r, C_norm, a); @. r = aggregate_values - r
-        for _ in 1:50
+        for i in 1:irls_max_iter
+            println(i)
             # Compute IRLS weights via LossFunctions.jl
             w_irls = _irls_weights(r, loss_norm, ε_irls)
             @. w_eff_i = w_irls * w_obs
@@ -155,7 +162,7 @@ function disaggregate(m::Spline,
             mul!(rhs_irls, C_norm', w_eff_y)
             a_new = _spline_solve(A_irls, rhs_irls)
             mul!(r, C_norm, a_new); @. r = aggregate_values - r
-            _irls_converged(a_new, a) && (a = a_new; break)
+            _irls_converged(a_new, a, irls_tol) && (a = a_new; break)
             a = a_new
         end
     else
@@ -251,7 +258,9 @@ function disaggregate(m::Spline,
                       output_period::Dates.Period = Month(1),
                       output_start::Union{Dates.TimeType,Nothing} = nothing,
                       output_end::Union{Dates.TimeType,Nothing} = nothing,
-                      weights::Union{AbstractVector,Nothing} = nothing)
+                      weights::Union{AbstractVector,Nothing} = nothing,
+                      irls_tol::Float64 = 1e-8,
+                      irls_max_iter::Int = 50)
 
     n, n_series = size(Y)
     (length(interval_start) == n && length(interval_end) == n) ||
@@ -266,6 +275,10 @@ function disaggregate(m::Spline,
             throw(DimensionMismatch("weights must have length $n (one per observation row)."))
         all(>(0), weights) || throw(ArgumentError("All weights must be positive."))
     end
+    irls_tol > 0 ||
+        throw(ArgumentError("irls_tol must be positive."))
+    irls_max_iter >= 1 ||
+        throw(ArgumentError("irls_max_iter must be >= 1."))
 
     # ── Shared setup (identical to single-series path) ────────────────────────
     order = sortperm(interval_start)
@@ -386,7 +399,7 @@ function disaggregate(m::Spline,
             a      = _batch_solve(M_fact, rhs_j)
             fill!(w_irls, 1.0)
             mul!(r, C_norm, a); @. r = y_j - r
-            for _ in 1:50
+            for _ in 1:irls_max_iter
                 # Compute IRLS weights via LossFunctions.jl
                 w_irls = _irls_weights(r, loss_norm, ε_irls)
                 @. w_eff_i = w_irls * w_obs
@@ -397,7 +410,7 @@ function disaggregate(m::Spline,
                 mul!(rhs_irls, C_norm', w_eff_i)
                 a_new = _spline_solve(A_irls, rhs_irls)
                 mul!(r, C_norm, a_new); @. r = y_j - r
-                _irls_converged(a_new, a) && (a = a_new; break)
+                _irls_converged(a_new, a, irls_tol) && (a = a_new; break)
                 a = a_new
             end
             mul!(view(Signal, :, j), B_out', a)
