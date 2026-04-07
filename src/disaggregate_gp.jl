@@ -2,7 +2,7 @@ function disaggregate(m::GP,
                       aggregate_values::AbstractVector,
                       interval_start::AbstractVector{<:Dates.TimeType},
                       interval_end::AbstractVector{<:Dates.TimeType};
-                      loss_norm::Symbol = :L2,
+                      loss_norm::DistanceLoss = L2DistLoss(),
                       output_period::Dates.Period = Month(1),
                       output_start::Union{Dates.TimeType,Nothing} = nothing,
                       output_end::Union{Dates.TimeType,Nothing} = nothing,
@@ -19,8 +19,6 @@ function disaggregate(m::GP,
     m.obs_noise >= 0 ||
         throw(ArgumentError("obs_noise must be ≥ 0."))
     m.n_quad >= 3 || throw(ArgumentError("n_quad must be ≥ 3."))
-    loss_norm ∈ (:L1, :L2, :Huber) ||
-        throw(ArgumentError("loss_norm must be :L1, :L2, or :Huber; got :$loss_norm."))
     if !isnothing(weights)
         length(weights) == n ||
             throw(DimensionMismatch("weights must have the same length as aggregate_values."))
@@ -89,13 +87,12 @@ function disaggregate(m::GP,
     v      = L_M \ CtWy                      # M'⁻¹ CᵀWy  [m]
     μ_Z    = (CtWy .- S_W * v) ./ σ²         # [m]
 
-    # ── L1/Huber: IRLS refinement (skipped for :L2) ───────────────────────────
+    # ── L1/Huber: IRLS refinement (skipped for L2DistLoss) ────────────────────
     # Replace W=W_obs with combined weights w_irls[i]*w_obs[i], iterate to convergence.
     # Predicted interval averages are C*μ_Z (not C*v, which is the Woodbury intermediate).
-    if loss_norm == :L1 || loss_norm == :Huber
+    if !(loss_norm isa L2DistLoss)
         ε_irls = 1e-6 * (std(y) + 1e-10)
         w_irls = ones(n)
-        loss = _make_loss(loss_norm, m.huber_delta)
         for _ in 1:50
             W_eff      = Diagonal(w_irls .* w_obs)
             S_W        = C' * W_eff * C
@@ -106,7 +103,7 @@ function disaggregate(m::GP,
             μ_Z_new    = (CtWy .- S_W * v) ./ σ²
             r          = y .- C * v
             # Compute IRLS weights via LossFunctions.jl
-            w_irls = _irls_weights(r, loss, ε_irls)
+            w_irls = _irls_weights(r, loss_norm, ε_irls)
             _irls_converged(μ_Z_new, μ_Z) && (μ_Z = μ_Z_new; break)
             μ_Z = μ_Z_new
         end
@@ -129,7 +126,7 @@ function disaggregate(m::GP,
             :kernel        => m.kernel,
             :obs_noise     => m.obs_noise,
             :n_quad        => m.n_quad,
-            :loss_norm     => loss_norm,
+            :loss_norm     => string(loss_norm),
             :output_period => output_period,
         )
     )

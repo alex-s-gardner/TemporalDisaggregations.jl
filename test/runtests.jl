@@ -5,6 +5,7 @@ using DimensionalData: DimStack, DimArray, Ti, dims, hasdim, metadata
 using LinearAlgebra
 using Statistics
 using KernelFunctions: SqExponentialKernel, with_lengthscale
+using LossFunctions: L1DistLoss, L2DistLoss, HuberLoss
 
 const TD = TemporalDisaggregations
 
@@ -210,8 +211,8 @@ end
         @testset "L1 vs L2 agree on clean data" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [3.0 + sin(2π * (i / 12.0)) for i in 1:24]
-            r_l2 = disaggregate(Spline(), y, t1, t2; loss_norm = :L2)
-            r_l1 = disaggregate(Spline(), y, t1, t2; loss_norm = :L1)
+            r_l2 = disaggregate(Spline(), y, t1, t2; loss_norm = L2DistLoss())
+            r_l1 = disaggregate(Spline(), y, t1, t2; loss_norm = L1DistLoss())
             @test cor(r_l2.signal.data, r_l1.signal.data) > 0.99
         end
 
@@ -277,8 +278,8 @@ end
         @testset "L1 vs L2 agree on clean data" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [2.0 + sin(2π * i / 12) for i in 1:24]
-            r_l2 = disaggregate(Sinusoid(), y, t1, t2; loss_norm = :L2)
-            r_l1 = disaggregate(Sinusoid(), y, t1, t2; loss_norm = :L1)
+            r_l2 = disaggregate(Sinusoid(), y, t1, t2; loss_norm = L2DistLoss())
+            r_l1 = disaggregate(Sinusoid(), y, t1, t2; loss_norm = L1DistLoss())
             @test cor(r_l2.signal.data, r_l1.signal.data) > 0.99
         end
 
@@ -350,7 +351,7 @@ end
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [sin(2π * i / 12) for i in 1:24]
             result = disaggregate(GP(obs_noise=0.1), y, t1, t2;
-                                  loss_norm = :L1)
+                                  loss_norm = L1DistLoss())
             @test all(result.std.data .>= 0.0)
             @test all(isfinite, result.signal)
         end
@@ -416,7 +417,7 @@ end
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [sin(2π * i / 12) for i in 1:24]
             w = rand(24) .+ 0.1        # random positive weights
-            r = disaggregate(Spline(), y, t1, t2; loss_norm = :L1, weights = w)
+            r = disaggregate(Spline(), y, t1, t2; loss_norm = L1DistLoss(), weights = w)
             @test all(isfinite, r.signal)
             @test all(r.std.data .>= 0)
         end
@@ -425,10 +426,10 @@ end
             t1, t2    = make_monthly_intervals(Date(2020, 1, 1), 24)
             y_clean   = [sin(2π * i / 12) for i in 1:24]
             y_blunder = copy(y_clean); y_blunder[12] += 100.0
-            r_clean = disaggregate(GP(obs_noise=0.1), y_clean,   t1, t2; loss_norm=:L1)
-            r_blow  = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; loss_norm=:L1)
+            r_clean = disaggregate(GP(obs_noise=0.1), y_clean,   t1, t2; loss_norm=L1DistLoss())
+            r_blow  = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; loss_norm=L1DistLoss())
             w = ones(24); w[12] = 1e-6
-            r_w     = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; loss_norm=:L1, weights=w)
+            r_w     = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; loss_norm=L1DistLoss(), weights=w)
             @test norm(r_w.signal.data - r_clean.signal.data) <
                   norm(r_blow.signal.data - r_clean.signal.data)
         end
@@ -554,8 +555,8 @@ end
             y_clean   = [sin(2π * i / 12) for i in 1:36]
             y_blunder = copy(y_clean); y_blunder[18] += 100.0
             r_truth = disaggregate(Spline(smoothness=1e-1), y_clean,   t1, t2)
-            r_l2    = disaggregate(Spline(smoothness=1e-1), y_blunder, t1, t2; loss_norm=:L2)
-            r_l1    = disaggregate(Spline(smoothness=1e-1), y_blunder, t1, t2; loss_norm=:L1)
+            r_l2    = disaggregate(Spline(smoothness=1e-1), y_blunder, t1, t2; loss_norm=L2DistLoss())
+            r_l1    = disaggregate(Spline(smoothness=1e-1), y_blunder, t1, t2; loss_norm=L1DistLoss())
             @test norm(r_l1.signal.data .- r_truth.signal.data) <
                   norm(r_l2.signal.data .- r_truth.signal.data)
         end
@@ -581,7 +582,7 @@ end
             w = fill(1.0, 24); w[6] = 1e-6; w[18] = 1e-6
             r_truth = disaggregate(Spline(smoothness=1e-6), y_clean,   t1, t2)
             r_comb  = disaggregate(Spline(smoothness=1e-6), y_blunder, t1, t2;
-                                   loss_norm=:L1, weights=w)
+                                   loss_norm=L1DistLoss(), weights=w)
             @test all(isfinite, r_comb.signal.data)
             @test norm(r_comb.signal.data .- r_truth.signal.data) < 1.0
         end
@@ -618,14 +619,14 @@ end
             r = disaggregate(
                     Spline(smoothness=0.2, n_knots=20, penalty_order=2, tension=1.5),
                     ones(12), t1, t2;
-                    loss_norm=:L1, output_period=Week(2))
+                    loss_norm=L1DistLoss(), output_period=Week(2))
             m = metadata(r)
             @test m[:method]        == :spline
             @test m[:smoothness]    == 0.2
             @test m[:n_knots]       == 20
             @test m[:penalty_order] == 2
             @test m[:tension]       == 1.5
-            @test m[:loss_norm]     == :L1
+            @test m[:loss_norm]     == "L1DistLoss"
             @test m[:output_period] == Week(2)
         end
 
@@ -744,8 +745,8 @@ end
             y_clean   = [2.0 + sin(2π * i / 12) for i in 1:36]
             y_blunder = copy(y_clean); y_blunder[18] += 50.0
             r_truth = disaggregate(Sinusoid(smoothness_interannual=1e-6), y_clean,   t1, t2)
-            r_l2    = disaggregate(Sinusoid(smoothness_interannual=1e-6), y_blunder, t1, t2; loss_norm=:L2)
-            r_l1    = disaggregate(Sinusoid(smoothness_interannual=1e-6), y_blunder, t1, t2; loss_norm=:L1)
+            r_l2    = disaggregate(Sinusoid(smoothness_interannual=1e-6), y_blunder, t1, t2; loss_norm=L2DistLoss())
+            r_l1    = disaggregate(Sinusoid(smoothness_interannual=1e-6), y_blunder, t1, t2; loss_norm=L1DistLoss())
             @test norm(r_l1.signal.data .- r_truth.signal.data) <
                   norm(r_l2.signal.data .- r_truth.signal.data)
         end
@@ -861,10 +862,10 @@ end
             y_clean   = [sin(2π * i / 12) for i in 1:24]
             y_blunder = copy(y_clean); y_blunder[12] += 50.0
             r_clean = disaggregate(GP(obs_noise=0.1), y_clean,   t1, t2)
-            r_l2    = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; loss_norm=:L2)
+            r_l2    = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2; loss_norm=L2DistLoss())
             w = ones(24); w[12] = 1e-6
             r_l1w   = disaggregate(GP(obs_noise=0.1), y_blunder, t1, t2;
-                                   loss_norm=:L1, weights=w)
+                                   loss_norm=L1DistLoss(), weights=w)
             @test norm(r_l1w.signal.data .- r_clean.signal.data) <
                   norm(r_l2.signal.data  .- r_clean.signal.data)
         end
@@ -900,12 +901,12 @@ end
         @testset "metadata contains expected keys" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             y = ones(12)
-            r = disaggregate(GP(obs_noise=0.5, n_quad=7), y, t1, t2; loss_norm=:L1)
+            r = disaggregate(GP(obs_noise=0.5, n_quad=7), y, t1, t2; loss_norm=L1DistLoss())
             m = metadata(r)
             @test m[:method]    == :gp
             @test m[:obs_noise] == 0.5
             @test m[:n_quad]    == 7
-            @test m[:loss_norm] == :L1
+            @test m[:loss_norm] == "L1DistLoss"
         end
 
     end  # GP analytical
@@ -918,31 +919,31 @@ end
                 t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
                 y = [3.0 + sin(2π * i / 12) for i in 1:24]
 
-                r = disaggregate(Spline(), y, t1, t2; loss_norm = :Huber)
+                r = disaggregate(Spline(), y, t1, t2; loss_norm = HuberLoss(1.345))
                 @test all(isfinite, r.signal)
                 @test all(r.std.data .>= 0.0)
                 @test length(r.signal) > length(y)
-                @test metadata(r)[:loss_norm] == :Huber
+                @test metadata(r)[:loss_norm] == "HuberLoss with \$\\alpha\$ = 1.345"
             end
 
             @testset "Sinusoid Huber returns valid result" begin
                 t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
                 y = [2.0 + sin(2π * i / 12) for i in 1:24]
 
-                r = disaggregate(Sinusoid(), y, t1, t2; loss_norm = :Huber)
+                r = disaggregate(Sinusoid(), y, t1, t2; loss_norm = HuberLoss(1.345))
                 @test all(isfinite, r.signal)
                 @test all(r.std.data .>= 0.0)
-                @test metadata(r)[:loss_norm] == :Huber
+                @test metadata(r)[:loss_norm] == "HuberLoss with \$\\alpha\$ = 1.345"
             end
 
             @testset "GP Huber returns valid result" begin
                 t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
                 y = [sin(2π * i / 12) for i in 1:24]
 
-                r = disaggregate(GP(obs_noise=0.1), y, t1, t2; loss_norm = :Huber)
+                r = disaggregate(GP(obs_noise=0.1), y, t1, t2; loss_norm = HuberLoss(1.345))
                 @test all(isfinite, r.signal)
                 @test all(r.std.data .>= 0.0)
-                @test metadata(r)[:loss_norm] == :Huber
+                @test metadata(r)[:loss_norm] == "HuberLoss with \$\\alpha\$ = 1.345"
             end
         end
 
@@ -950,8 +951,8 @@ end
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [sin(2π * i / 12) for i in 1:24]
 
-            r1 = disaggregate(Spline(huber_delta=1.0), y, t1, t2; loss_norm=:Huber)
-            r2 = disaggregate(Spline(huber_delta=2.0), y, t1, t2; loss_norm=:Huber)
+            r1 = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(1.0))
+            r2 = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(2.0))
 
             @test all(isfinite, r1.signal)
             @test all(isfinite, r2.signal)
@@ -965,16 +966,16 @@ end
             y_clean = [3.0 + sin(2π * i / 12) + 0.1 * randn() for i in 1:36]
 
             @testset "Spline: Huber ≈ L2 on clean data" begin
-                r_l2    = disaggregate(Spline(smoothness=1e-1), y_clean, t1, t2; loss_norm=:L2)
-                r_huber = disaggregate(Spline(smoothness=1e-1), y_clean, t1, t2; loss_norm=:Huber)
+                r_l2    = disaggregate(Spline(smoothness=1e-1), y_clean, t1, t2; loss_norm=L2DistLoss())
+                r_huber = disaggregate(Spline(smoothness=1e-1), y_clean, t1, t2; loss_norm=HuberLoss(1.345))
 
                 # Should be highly correlated on clean data
                 @test cor(r_l2.signal.data, r_huber.signal.data) > 0.99
             end
 
             @testset "Sinusoid: Huber ≈ L2 on clean data" begin
-                r_l2    = disaggregate(Sinusoid(), y_clean, t1, t2; loss_norm=:L2)
-                r_huber = disaggregate(Sinusoid(), y_clean, t1, t2; loss_norm=:Huber)
+                r_l2    = disaggregate(Sinusoid(), y_clean, t1, t2; loss_norm=L2DistLoss())
+                r_huber = disaggregate(Sinusoid(), y_clean, t1, t2; loss_norm=HuberLoss(1.345))
 
                 @test cor(r_l2.signal.data, r_huber.signal.data) > 0.99
             end
@@ -983,8 +984,8 @@ end
                 y_short = y_clean[1:24]
                 t1_s, t2_s = t1[1:24], t2[1:24]
 
-                r_l2    = disaggregate(GP(obs_noise=0.5), y_short, t1_s, t2_s; loss_norm=:L2)
-                r_huber = disaggregate(GP(obs_noise=0.5), y_short, t1_s, t2_s; loss_norm=:Huber)
+                r_l2    = disaggregate(GP(obs_noise=0.5), y_short, t1_s, t2_s; loss_norm=L2DistLoss())
+                r_huber = disaggregate(GP(obs_noise=0.5), y_short, t1_s, t2_s; loss_norm=HuberLoss(1.345))
 
                 @test cor(r_l2.signal.data, r_huber.signal.data) > 0.95
             end
@@ -999,9 +1000,9 @@ end
 
             @testset "Spline: Huber more robust than L2" begin
                 m = Spline(smoothness=1e-1)
-                r_clean = disaggregate(m, y_clean, t1, t2; loss_norm=:L2)
-                r_l2    = disaggregate(m, y_outlier, t1, t2; loss_norm=:L2)
-                r_huber = disaggregate(m, y_outlier, t1, t2; loss_norm=:Huber)
+                r_clean = disaggregate(m, y_clean, t1, t2; loss_norm=L2DistLoss())
+                r_l2    = disaggregate(m, y_outlier, t1, t2; loss_norm=L2DistLoss())
+                r_huber = disaggregate(m, y_outlier, t1, t2; loss_norm=HuberLoss(1.345))
 
                 # Huber should be closer to clean truth than L2
                 err_l2    = norm(r_l2.signal.data - r_clean.signal.data)
@@ -1011,9 +1012,9 @@ end
 
             @testset "Sinusoid: Huber more robust than L2" begin
                 m = Sinusoid(smoothness_interannual=1e-6)
-                r_clean = disaggregate(m, y_clean, t1, t2; loss_norm=:L2)
-                r_l2    = disaggregate(m, y_outlier, t1, t2; loss_norm=:L2)
-                r_huber = disaggregate(m, y_outlier, t1, t2; loss_norm=:Huber)
+                r_clean = disaggregate(m, y_clean, t1, t2; loss_norm=L2DistLoss())
+                r_l2    = disaggregate(m, y_outlier, t1, t2; loss_norm=L2DistLoss())
+                r_huber = disaggregate(m, y_outlier, t1, t2; loss_norm=HuberLoss(1.345))
 
                 err_l2    = norm(r_l2.signal.data - r_clean.signal.data)
                 err_huber = norm(r_huber.signal.data - r_clean.signal.data)
@@ -1026,9 +1027,9 @@ end
                 t1_s, t2_s = t1[1:24], t2[1:24]
 
                 m = GP(obs_noise=0.1)
-                r_clean = disaggregate(m, y_short_c, t1_s, t2_s; loss_norm=:L2)
-                r_l2    = disaggregate(m, y_short_o, t1_s, t2_s; loss_norm=:L2)
-                r_huber = disaggregate(m, y_short_o, t1_s, t2_s; loss_norm=:Huber)
+                r_clean = disaggregate(m, y_short_c, t1_s, t2_s; loss_norm=L2DistLoss())
+                r_l2    = disaggregate(m, y_short_o, t1_s, t2_s; loss_norm=L2DistLoss())
+                r_huber = disaggregate(m, y_short_o, t1_s, t2_s; loss_norm=HuberLoss(1.345))
 
                 err_l2    = norm(r_l2.signal.data - r_clean.signal.data)
                 err_huber = norm(r_huber.signal.data - r_clean.signal.data)
@@ -1038,9 +1039,9 @@ end
             @testset "Huber vs L1 comparison" begin
                 # Huber and L1 should give similar robustness
                 m = Spline(smoothness=1e-1)
-                r_clean = disaggregate(m, y_clean, t1, t2; loss_norm=:L2)
-                r_l1    = disaggregate(m, y_outlier, t1, t2; loss_norm=:L1)
-                r_huber = disaggregate(m, y_outlier, t1, t2; loss_norm=:Huber)
+                r_clean = disaggregate(m, y_clean, t1, t2; loss_norm=L2DistLoss())
+                r_l1    = disaggregate(m, y_outlier, t1, t2; loss_norm=L1DistLoss())
+                r_huber = disaggregate(m, y_outlier, t1, t2; loss_norm=HuberLoss(1.345))
 
                 # Both should be similarly close to truth (within 20% of each other)
                 err_l1    = norm(r_l1.signal.data - r_clean.signal.data)
@@ -1057,10 +1058,10 @@ end
             y_outlier = copy(y_clean)
             y_outlier[18] += 5.0  # Moderate outlier
 
-            r_l2     = disaggregate(Spline(smoothness=1e-1), y_outlier, t1, t2; loss_norm=:L2)
-            r_small  = disaggregate(Spline(smoothness=1e-1, huber_delta=0.5), y_outlier, t1, t2; loss_norm=:Huber)
-            r_medium = disaggregate(Spline(smoothness=1e-1, huber_delta=1.345), y_outlier, t1, t2; loss_norm=:Huber)
-            r_large  = disaggregate(Spline(smoothness=1e-1, huber_delta=5.0), y_outlier, t1, t2; loss_norm=:Huber)
+            r_l2     = disaggregate(Spline(smoothness=1e-1), y_outlier, t1, t2; loss_norm=L2DistLoss())
+            r_small  = disaggregate(Spline(smoothness=1e-1), y_outlier, t1, t2; loss_norm=HuberLoss(0.5))
+            r_medium = disaggregate(Spline(smoothness=1e-1), y_outlier, t1, t2; loss_norm=HuberLoss(1.345))
+            r_large  = disaggregate(Spline(smoothness=1e-1), y_outlier, t1, t2; loss_norm=HuberLoss(5.0))
 
             # Larger delta should be closer to L2
             cor_small  = cor(r_small.signal.data, r_l2.signal.data)
@@ -1076,7 +1077,7 @@ end
             y = [sin(2π * i / 12) for i in 1:24]
             w = rand(24) .+ 0.5  # Random positive weights
 
-            r = disaggregate(Spline(), y, t1, t2; loss_norm=:Huber, weights=w)
+            r = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(1.345), weights=w)
             @test all(isfinite, r.signal)
             @test all(r.std.data .>= 0)
         end
@@ -1086,18 +1087,16 @@ end
                 t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
                 y = ones(12)
 
-                r = disaggregate(Spline(), y, t1, t2; loss_norm=:Huber)
+                r = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(1.345))
                 @test all(isfinite, r.signal)
                 # Should approximate constant
                 @test std(r.signal.data) < 0.1
             end
 
             @testset "Zero delta validation" begin
-                # huber_delta must be > 0
-                @test_throws ArgumentError Spline(huber_delta=0.0)
-                @test_throws ArgumentError Spline(huber_delta=-1.0)
-                @test_throws ArgumentError Sinusoid(huber_delta=0.0)
-                @test_throws ArgumentError GP(huber_delta=-1.0)
+                # HuberLoss delta must be > 0 (enforced by LossFunctions.jl)
+                @test_throws ErrorException HuberLoss(0.0)
+                @test_throws ErrorException HuberLoss(-1.0)
             end
 
             @testset "Very large residuals" begin
@@ -1106,7 +1105,7 @@ end
                 y = [sin(2π * i / 12) for i in 1:24]
                 y[12] = 1e6  # Extreme outlier
 
-                r = disaggregate(Spline(), y, t1, t2; loss_norm=:Huber)
+                r = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(1.345))
                 @test all(isfinite, r.signal)
                 @test all(r.std.data .>= 0)
             end
@@ -1118,7 +1117,7 @@ end
             y = [sin(2π * i / 12) + 0.1 * randn() for i in 1:24]
 
             # Should converge without issues
-            r = disaggregate(Spline(), y, t1, t2; loss_norm=:Huber)
+            r = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(1.345))
             @test all(isfinite, r.signal)
             # No direct way to check iteration count, but should not error
         end
@@ -1136,8 +1135,8 @@ end
         # Test all three methods with all three loss types
         @testset "All methods × all losses" begin
             for method in [Spline(), Sinusoid(), GP(obs_noise=0.1)]
-                for loss_norm in [:L1, :L2, :Huber]
-                    r = disaggregate(method, y, t1, t2; loss_norm=loss_norm)
+                for (loss, expected_name) in [(L1DistLoss(), "L1DistLoss"), (L2DistLoss(), "L2DistLoss"), (HuberLoss(1.345), "HuberLoss with \$\\alpha\$ = 1.345")]
+                    r = disaggregate(method, y, t1, t2; loss_norm=loss)
 
                     # Basic smoke test: result should have signal and std
                     @test haskey(r, :signal)
@@ -1145,14 +1144,14 @@ end
                     @test length(r.signal) > 0
 
                     # Metadata should record loss type
-                    @test metadata(r)[:loss_norm] == loss_norm
+                    @test metadata(r)[:loss_norm] == expected_name
                 end
             end
         end
 
         # Numerical stability: IRLS should converge
         @testset "IRLS convergence" begin
-            for loss_norm in [:L1, :Huber]
+            for loss_norm in [L1DistLoss(), HuberLoss(1.345)]
                 r = disaggregate(Spline(), y, t1, t2; loss_norm=loss_norm)
                 @test !isnan(r.signal[1])
                 @test all(isfinite.(r.signal))
@@ -1162,8 +1161,8 @@ end
 
         # Custom Huber delta parameter
         @testset "Custom Huber delta" begin
-            r1 = disaggregate(Spline(huber_delta=0.5), y, t1, t2; loss_norm=:Huber)
-            r2 = disaggregate(Spline(huber_delta=2.0), y, t1, t2; loss_norm=:Huber)
+            r1 = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(0.5))
+            r2 = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(2.0))
 
             # Different delta values should produce different results
             @test !isapprox(r1.signal[1], r2.signal[1])

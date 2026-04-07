@@ -64,7 +64,7 @@ result = disaggregate(Spline(
     smoothness    = 1e-3,       # larger = smoother
     tension       = 0.0,        # > 0 suppresses oscillation
     penalty_order = 3,          # order of difference penalty
-), y, t1, t2; loss_norm = :L2)
+), y, t1, t2; loss_norm = L2DistLoss())
 ```
 
 **Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
@@ -153,12 +153,14 @@ result = disaggregate(Spline(), y, t1, t2; output_period = Week(1), output_start
 
 The `output_start` kwarg anchors the output grid. For `Month` steps, only the day-of-month matters — the grid automatically starts from the correct month for your data. For other step sizes, `output_start` is used as the literal first grid point.
 
-### Robust L1 Loss
+### Robust Loss Functions
 
-All methods support `loss_norm = :L1` for robustness to blunders (outliers). L1 loss down-weights suspicious observations automatically, without needing to identify them manually. Implemented via Iteratively Reweighted Least Squares (IRLS) using the [LossFunctions.jl](https://github.com/JuliaML/LossFunctions.jl) package:
+All methods support robust loss functions for handling outliers. Pass any `DistanceLoss` from [LossFunctions.jl](https://github.com/JuliaML/LossFunctions.jl):
 
 ```julia
-result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = :L1)
+using LossFunctions
+result = disaggregate(GP(obs_noise = 4.0), y, t1, t2; loss_norm = L1DistLoss())
+result = disaggregate(Spline(), y, t1, t2; loss_norm = HuberLoss(1.5))
 ```
 
 ### Per-observation Weights
@@ -170,7 +172,7 @@ When observation uncertainties are known, pass `weights = 1 ./ σ²_obs` to focu
 result = disaggregate(Spline(), y, t1, t2; weights = 1.0 ./ σ_obs.^2)
 ```
 
-Weights combine with `loss_norm = :L1`: the IRLS weights are multiplied element-wise with your supplied weights at each iteration, so both mechanisms work together.
+Weights combine with robust losses: the IRLS weights are multiplied element-wise with your supplied weights at each iteration, so both mechanisms work together.
 
 ![Per-observation weights: unweighted vs weighted spline](docs/images/weights_detail.png)
 
@@ -179,7 +181,7 @@ Weights combine with `loss_norm = :L1`: the IRLS weights are multiplied element-
 > predicted vs. observed interval averages and `q(t*)` is a dimensionless coverage factor.
 > `std` is lower where observations are dense and higher where they are sparse — giving an
 > intuitive picture of estimation reliability across the output timeline. When using
-> `loss_norm = :L1`, both quantities are computed from the final IRLS solution.
+> `loss_norm = L1DistLoss()` or other robust losses, both quantities are computed from the final IRLS solution.
 
 ## Return Type
 
@@ -205,7 +207,7 @@ julia> result
   :output_period => Month(1)
   :method        => :gp
   :obs_noise     => 4.0
-  :loss_norm     => :L2
+  :loss_norm     => "L2DistLoss"
   :kernel        => Sum of 2 kernels:…
   :n_quad        => 5
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘

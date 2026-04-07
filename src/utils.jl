@@ -77,30 +77,6 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    _make_loss(loss_norm, delta=1.345)
-
-Construct a LossFunctions.jl loss object from the loss_norm symbol.
-
-# Arguments
-- `loss_norm::Symbol`: One of `:L1`, `:L2`, or `:Huber`
-- `delta::Float64`: Threshold parameter for Huber loss (default 1.345)
-
-# Returns
-A `DistanceLoss` object from LossFunctions.jl
-"""
-function _make_loss(loss_norm::Symbol, delta::Float64=1.345)
-    if loss_norm == :L1
-        return L1DistLoss()
-    elseif loss_norm == :L2
-        return L2DistLoss()
-    elseif loss_norm == :Huber
-        return HuberLoss(delta)
-    else
-        throw(ArgumentError("loss_norm must be :L1, :L2, or :Huber; got :$loss_norm"))
-    end
-end
-
-"""
     _irls_weights(r, loss, ε)
 
 Compute IRLS weights for robust loss function via `w = 1 / (|∂L/∂r| + ε)`.

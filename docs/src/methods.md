@@ -21,7 +21,7 @@ result = disaggregate(Spline(
     smoothness    = 1e-3,       # larger = smoother
     tension       = 0.0,        # > 0 suppresses oscillation
     penalty_order = 3,          # order of difference penalty
-), y, t1, t2; loss_norm = :L2)
+), y, t1, t2; loss_norm = L2DistLoss())
 ```
 
 **Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
@@ -95,16 +95,17 @@ result = disaggregate(GP(
 
 ## Robust Loss Functions
 
-TemporalDisaggregations.jl uses [LossFunctions.jl](https://github.com/JuliaML/LossFunctions.jl) for its robust loss implementations. Three loss types are currently supported:
+TemporalDisaggregations.jl uses [LossFunctions.jl](https://github.com/JuliaML/LossFunctions.jl) for its robust loss implementations. Pass any `DistanceLoss` type:
 
-- `:L2` — Least squares (standard, no IRLS)
-- `:L1` — Absolute deviation (robust to outliers via IRLS)
-- `:Huber` — Hybrid loss (L2 for small residuals, L1 for large residuals)
+- `L2DistLoss()` — Least squares (standard, no IRLS)
+- `L1DistLoss()` — Absolute deviation (robust to outliers via IRLS)
+- `HuberLoss(δ)` — Hybrid loss (L2 for small residuals, L1 for large residuals)
 
-The Huber threshold `δ` can be customized via the method struct:
+Example with custom Huber threshold:
 
 ```julia
-result = disaggregate(Spline(huber_delta=2.0), y, t1, t2; loss_norm=:Huber)
+using LossFunctions
+result = disaggregate(Spline(), y, t1, t2; loss_norm=HuberLoss(2.0))
 ```
 
 Under the hood, IRLS weights are computed as `w = 1 / (|∂L/∂r| + ε)` where `∂L/∂r` is provided by LossFunctions.jl's `deriv()` function.
@@ -125,5 +126,5 @@ coverage factor derived from the method's hat vector at time `t*`:
 - **Sparse observation coverage** → `q(t*) > 1` → `std(t*) > σ̂`
 
 This makes `std` comparable across methods and automatically reflects the temporal
-distribution of the input observations. When using `loss_norm = :L1`, both `σ̂` and
+distribution of the input observations. When using robust losses (`L1DistLoss()`, `HuberLoss(δ)`), both `σ̂` and
 `q(t*)` are computed from the final IRLS solution.

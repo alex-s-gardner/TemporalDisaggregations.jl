@@ -15,9 +15,9 @@ if ccall(:jl_generating_output, Cint, ()) == 1
         r_gp   = disaggregate(GP(),       y, t1, t2; output_period = Month(1))
 
         # L1 loss path (IRLS loop — all methods share helpers)
-        disaggregate(Spline(),   y, t1, t2; loss_norm = :L1)
-        disaggregate(Sinusoid(), y, t1, t2; loss_norm = :L1)
-        disaggregate(GP(),       y, t1, t2; loss_norm = :L1)
+        disaggregate(Spline(),   y, t1, t2; loss_norm = L1DistLoss())
+        disaggregate(Sinusoid(), y, t1, t2; loss_norm = L1DistLoss())
+        disaggregate(GP(),       y, t1, t2; loss_norm = L1DistLoss())
 
         # Weighted observations path
         disaggregate(Spline(),   y, t1, t2; weights = w)
