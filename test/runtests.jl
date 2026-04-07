@@ -1169,4 +1169,46 @@ end
         end
     end  # LossFunctions.jl integration
 
+    @testset "IRLS tolerance validation" begin
+        n = 50
+        t1, t2 = make_monthly_intervals(Date(2020, 1, 1), n)
+        y = randn(n)
+
+        # Valid tolerances
+        @test disaggregate(Spline(), y, t1, t2; irls_tol=1e-8) isa DimStack
+        @test disaggregate(Spline(), y, t1, t2; irls_tol=1e-4) isa DimStack
+        @test disaggregate(Spline(), y, t1, t2; irls_tol=1e-12) isa DimStack
+
+        # Invalid tolerances
+        @test_throws ArgumentError disaggregate(Spline(), y, t1, t2; irls_tol=0.0)
+        @test_throws ArgumentError disaggregate(Spline(), y, t1, t2; irls_tol=-1e-8)
+
+        # Test all three methods accept the parameter
+        @test disaggregate(Sinusoid(), y, t1, t2; irls_tol=1e-6) isa DimStack
+        @test disaggregate(GP(), y, t1, t2; irls_tol=1e-6) isa DimStack
+    end  # IRLS tolerance validation
+
+    @testset "IRLS max_iter validation" begin
+        n = 50
+        t1, t2 = make_monthly_intervals(Date(2020, 1, 1), n)
+        y = randn(n)
+
+        # Valid max_iter values
+        @test disaggregate(Spline(), y, t1, t2; irls_max_iter=50) isa DimStack
+        @test disaggregate(Spline(), y, t1, t2; irls_max_iter=10) isa DimStack
+        @test disaggregate(Spline(), y, t1, t2; irls_max_iter=100) isa DimStack
+        @test disaggregate(Spline(), y, t1, t2; irls_max_iter=1) isa DimStack
+
+        # Invalid max_iter values
+        @test_throws ArgumentError disaggregate(Spline(), y, t1, t2; irls_max_iter=0)
+        @test_throws ArgumentError disaggregate(Spline(), y, t1, t2; irls_max_iter=-1)
+
+        # Test all three methods accept the parameter
+        @test disaggregate(Sinusoid(), y, t1, t2; irls_max_iter=20) isa DimStack
+        @test disaggregate(GP(), y, t1, t2; irls_max_iter=20) isa DimStack
+
+        # Test both parameters together
+        @test disaggregate(Spline(), y, t1, t2; irls_tol=1e-6, irls_max_iter=20) isa DimStack
+    end  # IRLS max_iter validation
+
 end

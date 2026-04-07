@@ -21,6 +21,6 @@ module TemporalDisaggregations
 
     export disaggregate, yeardecimal,
         DisaggregationMethod, Spline, Sinusoid, GP,
-        interval_average
+        interval_average, redundancy_filter
 
 end
