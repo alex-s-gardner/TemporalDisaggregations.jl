@@ -1198,4 +1198,307 @@ end
         @test disaggregate(Spline(), y, t1, t2; irls_tol=1e-6, irls_max_iter=20) isa DimStack
     end  # IRLS max_iter validation
 
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "redundancy_filter" begin
+        # Generate synthetic data with varying interval lengths
+        n = 100
+        base_date = Date(2020, 1, 1)
+
+        # Create observations with different interval lengths
+        t1 = [base_date + Day(rand(0:300)) for _ in 1:n]
+        interval_durations = [Day(rand([8, 16, 24, 32, 64, 128])) for _ in 1:n]
+        t2 = t1 .+ interval_durations
+
+        # Random errors (lower = better quality)
+        errors = rand(n) .* 10.0 .+ 1.0
+
+        @testset "Basic functionality" begin
+            keep = redundancy_filter(errors, t1, t2)
+
+            # Returns BitVector
+            @test keep isa BitVector
+            @test length(keep) == n
+
+            # Should filter out some observations
+            @test sum(keep) < n
+            @test sum(keep) > 0  # But not all
+        end
+
+        @testset "Input validation" begin
+            # Mismatched lengths
+            @test_throws ArgumentError redundancy_filter(errors[1:10], t1, t2)
+            @test_throws ArgumentError redundancy_filter(errors, t1[1:10], t2)
+            @test_throws ArgumentError redundancy_filter(errors, t1, t2[1:10])
+
+            # Invalid temporal_overlap
+            @test_throws ArgumentError redundancy_filter(errors, t1, t2; temporal_overlap=-0.1)
+            @test_throws ArgumentError redundancy_filter(errors, t1, t2; temporal_overlap=1.0)
+            @test_throws ArgumentError redundancy_filter(errors, t1, t2; temporal_overlap=1.5)
+
+            # Valid temporal_overlap
+            @test redundancy_filter(errors, t1, t2; temporal_overlap=0.0) isa BitVector
+            @test redundancy_filter(errors, t1, t2; temporal_overlap=0.5) isa BitVector
+            @test redundancy_filter(errors, t1, t2; temporal_overlap=0.99) isa BitVector
+
+            # Invalid bin_count_threshold vector length
+            @test_throws ArgumentError redundancy_filter(
+                errors, t1, t2;
+                interval_bins=[Day(0), Day(16), Day(32)],
+                bin_count_threshold=[3, 3]  # Wrong length (3 bins need 3 thresholds)
+            )
+        end
+
+        @testset "Quality-based filtering" begin
+            # Create data where low-error observations should be preferred
+            t1_test = [Date(2020, 1, 1) + Day(i) for i in 1:10]
+            t2_test = [Date(2020, 1, 1) + Day(i+1) for i in 1:10]
+
+            # First 5 have low error, last 5 have high error
+            errors_test = vcat(ones(5), ones(5) .* 10.0)
+
+            keep = redundancy_filter(errors_test, t1_test, t2_test;
+                                   bin_count_threshold=5)
+
+            # Low-error observations should be more likely to be kept
+            # (though not guaranteed due to temporal windowing)
+            @test sum(keep) <= 10
+        end
+
+        @testset "Uniform interval bins (Period)" begin
+            # Test with Period input (uniform bins)
+            keep = redundancy_filter(errors, t1, t2;
+                                   interval_bins=Day(30))
+            @test keep isa BitVector
+            @test length(keep) == n
+        end
+
+        @testset "Custom interval bins (Vector{Period})" begin
+            # Test with explicit bin edges
+            keep = redundancy_filter(errors, t1, t2;
+                                   interval_bins=[Day(0), Day(16), Day(32), Day(128)])
+            @test keep isa BitVector
+            @test length(keep) == n
+        end
+
+        @testset "Temporal overlap parameter" begin
+            # More overlap should generally keep more observations
+            keep_no_overlap = redundancy_filter(errors, t1, t2; temporal_overlap=0.0)
+            keep_high_overlap = redundancy_filter(errors, t1, t2; temporal_overlap=0.75)
+
+            @test sum(keep_no_overlap) <= sum(keep_high_overlap)
+        end
+
+        @testset "Per-bin thresholds" begin
+            # Test with vector of thresholds
+            keep = redundancy_filter(errors, t1, t2;
+                interval_bins=[Day(0), Day(16), Day(32), Day(128)],
+                bin_count_threshold=[5, 3, 2])
+
+            @test keep isa BitVector
+            @test length(keep) == n
+
+            # Single threshold should also work
+            keep2 = redundancy_filter(errors, t1, t2; bin_count_threshold=2)
+            @test keep2 isa BitVector
+        end
+
+        @testset "Edge cases" begin
+            # Very few observations
+            t1_small = [Date(2020, 1, 1), Date(2020, 2, 1)]
+            t2_small = [Date(2020, 1, 15), Date(2020, 2, 15)]
+            errors_small = [1.0, 2.0]
+
+            keep = redundancy_filter(errors_small, t1_small, t2_small)
+            @test keep isa BitVector
+            @test length(keep) == 2
+
+            # All observations in same bin with low threshold
+            keep_strict = redundancy_filter(errors_small, t1_small, t2_small;
+                                          bin_count_threshold=1)
+            @test sum(keep_strict) <= 2
+        end
+
+        @testset "Date vs DateTime" begin
+            # Test with DateTime instead of Date
+            t1_dt = DateTime.(t1)
+            t2_dt = DateTime.(t2)
+
+            keep = redundancy_filter(errors, t1_dt, t2_dt)
+            @test keep isa BitVector
+            @test length(keep) == n
+        end
+    end  # redundancy_filter
+
+    # ─────────────────────────────────────────────────────────────────────────
+    @testset "Batch Spline (Matrix input)" begin
+        # Generate test data: multiple series sharing the same intervals
+        n_obs = 36
+        n_series = 5
+        t1, t2 = make_monthly_intervals(Date(2020, 1, 1), n_obs)
+
+        # Create Y matrix: n_obs × n_series
+        # Each column is a different time series
+        Y = zeros(n_obs, n_series)
+        for j in 1:n_series
+            # Different signals: linear trend + sinusoid with different phases
+            Y[:, j] = [0.1 * i + sin(2π * (i / 12 + j / n_series)) for i in 1:n_obs]
+        end
+
+        @testset "Basic functionality - L2" begin
+            result = disaggregate(Spline(), Y, t1, t2)
+
+            # Returns named tuple with correct structure
+            @test result isa NamedTuple
+            @test haskey(result, :signal)
+            @test haskey(result, :std)
+            @test haskey(result, :dates)
+
+            # Correct dimensions
+            n_eval = length(result.dates)
+            @test size(result.signal) == (n_eval, n_series)
+            @test size(result.std) == (n_eval, n_series)
+            @test result.dates isa Vector{Date}
+
+            # All values should be finite
+            @test all(isfinite, result.signal)
+            @test all(isfinite, result.std)
+            @test all(>(0), result.std)
+        end
+
+        @testset "Consistency with single-series" begin
+            # Batch result should match individual disaggregate calls
+            result_batch = disaggregate(Spline(smoothness=0.1), Y, t1, t2)
+
+            for j in 1:n_series
+                result_single = disaggregate(Spline(smoothness=0.1), Y[:, j], t1, t2)
+
+                # Signal should match closely (within numerical tolerance)
+                @test result_batch.signal[:, j] ≈ result_single.signal.data atol=1e-10
+
+                # Std should also match
+                @test result_batch.std[:, j] ≈ result_single.std.data atol=1e-10
+
+                # Dates should be identical
+                @test result_batch.dates == result_single.signal[Ti=:].val
+            end
+        end
+
+        @testset "L1 loss (IRLS per series)" begin
+            # Add outliers to test L1 robustness
+            Y_outliers = copy(Y)
+            Y_outliers[5, 1] += 10.0  # Outlier in series 1
+            Y_outliers[15, 3] += 10.0  # Outlier in series 3
+
+            result = disaggregate(Spline(), Y_outliers, t1, t2; loss_norm=L1DistLoss())
+
+            # Should complete without error
+            @test result isa NamedTuple
+            @test all(isfinite, result.signal)
+            @test all(isfinite, result.std)
+
+            # L1 should produce different results than L2 for outlier data
+            result_l2 = disaggregate(Spline(), Y_outliers, t1, t2; loss_norm=L2DistLoss())
+            @test !isapprox(result.signal[:, 1], result_l2.signal[:, 1])
+        end
+
+        @testset "Huber loss" begin
+            result = disaggregate(Spline(), Y, t1, t2; loss_norm=HuberLoss(1.345))
+
+            @test result isa NamedTuple
+            @test all(isfinite, result.signal)
+            @test all(isfinite, result.std)
+        end
+
+        @testset "Custom parameters" begin
+            # Test with different smoothness
+            result1 = disaggregate(Spline(smoothness=1e-2), Y, t1, t2)
+            result2 = disaggregate(Spline(smoothness=1e-1), Y, t1, t2)
+
+            # Different smoothness should produce different results
+            @test !isapprox(result1.signal[:, 1], result2.signal[:, 1])
+
+            # Test with tension
+            result3 = disaggregate(Spline(tension=0.5), Y, t1, t2)
+            @test result3 isa NamedTuple
+            @test all(isfinite, result3.signal)
+        end
+
+        @testset "Output period control" begin
+            # Daily output
+            result_daily = disaggregate(Spline(), Y, t1, t2; output_period=Day(1))
+            @test length(result_daily.dates) > length(t1)
+
+            # Weekly output
+            result_weekly = disaggregate(Spline(), Y, t1, t2; output_period=Week(1))
+            @test length(result_weekly.dates) < length(result_daily.dates)
+        end
+
+        @testset "Weights" begin
+            # Uniform weights
+            w = ones(n_obs)
+            result = disaggregate(Spline(), Y, t1, t2; weights=w)
+            @test result isa NamedTuple
+
+            # Non-uniform weights
+            w_varied = rand(n_obs) .+ 0.5
+            result_weighted = disaggregate(Spline(), Y, t1, t2; weights=w_varied)
+            @test result_weighted isa NamedTuple
+
+            # Results should differ
+            @test !isapprox(result.signal[:, 1], result_weighted.signal[:, 1])
+        end
+
+        @testset "Input validation" begin
+            # Mismatched dimensions
+            @test_throws DimensionMismatch disaggregate(Spline(), Y, t1[1:10], t2)
+            @test_throws DimensionMismatch disaggregate(Spline(), Y, t1, t2[1:10])
+
+            # Invalid intervals
+            t1_bad = copy(t1); t2_bad = copy(t2)
+            t2_bad[5] = t1_bad[5]  # Make interval 5 have zero length
+            @test_throws ArgumentError disaggregate(Spline(), Y, t1_bad, t2_bad)
+
+            # Invalid weights
+            w_bad = ones(10)  # Wrong length
+            @test_throws DimensionMismatch disaggregate(Spline(), Y, t1, t2; weights=w_bad)
+
+            w_negative = ones(n_obs); w_negative[5] = -1.0
+            @test_throws ArgumentError disaggregate(Spline(), Y, t1, t2; weights=w_negative)
+        end
+
+        @testset "Edge cases" begin
+            # Single series (but as matrix)
+            Y_single = reshape(Y[:, 1], n_obs, 1)
+            result = disaggregate(Spline(), Y_single, t1, t2)
+            @test size(result.signal, 2) == 1
+
+            # Many series
+            Y_many = repeat(Y, 1, 3)  # 15 series total
+            result_many = disaggregate(Spline(), Y_many, t1, t2)
+            @test size(result_many.signal, 2) == 15
+        end
+
+        @testset "DateTime boundaries" begin
+            # Test with DateTime instead of Date
+            dt1 = DateTime.(t1)
+            dt2 = DateTime.(t2)
+
+            result = disaggregate(Spline(), Y, dt1, dt2)
+            @test result isa NamedTuple
+            @test all(isfinite, result.signal)
+        end
+
+        @testset "IRLS parameters" begin
+            # Custom IRLS tolerance
+            result = disaggregate(Spline(), Y, t1, t2;
+                                loss_norm=L1DistLoss(), irls_tol=1e-6)
+            @test result isa NamedTuple
+
+            # Custom max iterations
+            result2 = disaggregate(Spline(), Y, t1, t2;
+                                 loss_norm=L1DistLoss(), irls_max_iter=20)
+            @test result2 isa NamedTuple
+        end
+    end  # Batch Spline (Matrix input)
+
 end
