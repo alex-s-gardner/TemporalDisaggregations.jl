@@ -6,7 +6,9 @@ function disaggregate(m::GP,
                       output_period::Dates.Period = Month(1),
                       output_start::Union{Dates.TimeType,Nothing} = nothing,
                       output_end::Union{Dates.TimeType,Nothing} = nothing,
-                      weights::Union{AbstractVector,Nothing} = nothing)
+                      weights::Union{AbstractVector,Nothing} = nothing,
+                      irls_tol::Float64 = 1e-8,
+                      irls_max_iter::Int = 50)
 
     σ²  = m.obs_noise
     n   = length(aggregate_values)
@@ -74,14 +76,33 @@ function disaggregate(m::GP,
     jitter = 1e-6 * tr(K_raw) / n_ind
     K = Symmetric(K_raw + jitter * I)
 
+    # Additional jitter for M_W matrix (K*σ² + S_W) to ensure positive definiteness
+    # Use more aggressive jitter with a minimum floor value
+    jitter_M = max(1e-4, 1e-5 * (tr(K_raw) * σ² / n_ind))
+
     # ── Sparse GP posterior via matrix inversion lemma ────────────────────────
     # Σ_y = C K⁻¹ Cᵀ + σ²I  [n × n, never formed]
     # Woodbury: Σ_y⁻¹ = I/σ² − C M'⁻¹ Cᵀ / σ²   where M' = K σ² + CᵀWC
 
     W_obs  = Diagonal(w_obs)
     S_W    = C' * W_obs * C                  # [m × m]  (updated by IRLS for L1)
-    M_W    = Symmetric(K .* σ² .+ S_W)       # [m × m]
-    L_M    = cholesky(M_W)
+
+    # Adaptive jitter: progressively increase if cholesky fails
+    L_M = nothing
+    jitter_adaptive = jitter_M
+    for attempt in 1:10
+        try
+            M_W = Symmetric(K .* σ² .+ S_W + jitter_adaptive * I)
+            L_M = cholesky(M_W)
+            break
+        catch e
+            if e isa LinearAlgebra.PosDefException && attempt < 10
+                jitter_adaptive *= 10.0  # Increase jitter by 10x and retry
+            else
+                rethrow()
+            end
+        end
+    end
 
     CtWy   = C' * W_obs * y                  # [m]
     v      = L_M \ CtWy                      # M'⁻¹ CᵀWy  [m]
@@ -93,18 +114,32 @@ function disaggregate(m::GP,
     if !(loss_norm isa L2DistLoss)
         ε_irls = 1e-6 * (std(y) + 1e-10)
         w_irls = ones(n)
-        for _ in 1:50
+        for _ in 1:irls_max_iter
             W_eff      = Diagonal(w_irls .* w_obs)
             S_W        = C' * W_eff * C
-            M_W        = Symmetric(K .* σ² .+ S_W)
-            L_M        = cholesky(M_W)
+
+            # Adaptive jitter for IRLS iterations
+            jitter_adaptive = jitter_M
+            for attempt in 1:10
+                try
+                    M_W = Symmetric(K .* σ² .+ S_W + jitter_adaptive * I)
+                    L_M = cholesky(M_W)
+                    break
+                catch e
+                    if e isa LinearAlgebra.PosDefException && attempt < 10
+                        jitter_adaptive *= 10.0
+                    else
+                        rethrow()
+                    end
+                end
+            end
             CtWy       = C' * W_eff * y
             v          = L_M \ CtWy
             μ_Z_new    = (CtWy .- S_W * v) ./ σ²
             r          = y .- C * v
             # Compute IRLS weights via LossFunctions.jl
             w_irls = _irls_weights(r, loss_norm, ε_irls)
-            _irls_converged(μ_Z_new, μ_Z) && (μ_Z = μ_Z_new; break)
+            _irls_converged(μ_Z_new, μ_Z, irls_tol) && (μ_Z = μ_Z_new; break)
             μ_Z = μ_Z_new
         end
     end
