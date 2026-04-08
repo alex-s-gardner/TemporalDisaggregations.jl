@@ -241,13 +241,13 @@ lines(result[:signal])   # x-axis = dates, y-axis = signal values
 
 ## Method Comparison
 
-Benchmarks: 20-year span, `output_period=Week(1)`, 8 threads (Julia 1.12). Time = minimum over 2–3 runs. Memory = dominant working-set matrix (n × matrix\_width × 8 B).
+Benchmarks: 20-year span, `output_period=Week(1)`, 8 threads (Julia 1.12, Apple M2 Max). Time = minimum over 2–3 runs. Memory = dominant working-set matrix (n × matrix\_width × 8 B).
 
 | Method | Pros | Cons | n = 10k | n = 100k | n = 1M |
 |--------|------|------|:-------:|:--------:|:------:|
-| `Spline` | No kernel required; optional tension suppresses oscillation near sparse gaps | Design matrix O(n × n\_knots); can oscillate without tension | **12 ms**<br>19 MB | **103 ms**<br>192 MB | **807 ms**<br>1.9 GB |
-| `Sinusoid` | Analytical integrals (no quadrature); interpretable parameters (amplitude, phase, trend, anomalies); lowest peak memory | Assumes annual periodicity; poor fit for non-sinusoidal signals | **61 ms**<br>2 MB | **133 ms**<br>19 MB | **2.4 s**<br>192 MB |
-| `GP` | Arbitrary KernelFunctions.jl kernels; most flexible | O(n·m·q + m³) Cholesky — memory-limited above n ≈ 50 000 at weekly output | **2.0 s**<br>195 MB | **13.3 s**<br>1.9 GB | —<br>(>8 GB) |
+| `Spline` | No kernel required; optional tension suppresses oscillation near sparse gaps | Design matrix O(n × n\_knots); can oscillate without tension | **14 ms**<br>19 MB | **135 ms**<br>192 MB | **1.08 s**<br>1.9 GB |
+| `Sinusoid` | Analytical integrals (no quadrature); interpretable parameters (amplitude, phase, trend, anomalies); lowest peak memory | Assumes annual periodicity; poor fit for non-sinusoidal signals | **34 ms**<br>2 MB | **161 ms**<br>19 MB | **2.17 s**<br>192 MB |
+| `GP` | Arbitrary KernelFunctions.jl kernels; most flexible | O(n·m·q + m³) Cholesky — memory-limited above n ≈ 50 000 at weekly output | **2.00 s**<br>195 MB | **15.2 s**<br>1.9 GB | —<br>(>8 GB) |
 
 ## Dependencies
 - [BasicBSpline.jl](https://github.com/hyrodium/BasicBSpline.jl) — B-spline basis evaluation (Spline method)
