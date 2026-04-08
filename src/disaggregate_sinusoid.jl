@@ -55,6 +55,10 @@ function disaggregate(m::Sinusoid,
         all(>(0), weights) ||
             throw(ArgumentError("All weights must be positive."))
     end
+    irls_tol > 0 ||
+        throw(ArgumentError("irls_tol must be positive."))
+    irls_max_iter >= 1 ||
+        throw(ArgumentError("irls_max_iter must be >= 1."))
 
     # Sort chronologically
     order = sortperm(interval_start)

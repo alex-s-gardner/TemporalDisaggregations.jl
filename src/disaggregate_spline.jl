@@ -43,6 +43,10 @@ function disaggregate(m::Spline,
         all(>(0), weights) ||
             throw(ArgumentError("All weights must be positive."))
     end
+    irls_tol > 0 ||
+        throw(ArgumentError("irls_tol must be positive."))
+    irls_max_iter >= 1 ||
+        throw(ArgumentError("irls_max_iter must be >= 1."))
 
     # Sort intervals chronologically
     if !issorted(interval_start)
@@ -270,6 +274,10 @@ function disaggregate(m::Spline,
             throw(DimensionMismatch("weights must have length $n (one per observation row)."))
         all(>(0), weights) || throw(ArgumentError("All weights must be positive."))
     end
+    irls_tol > 0 ||
+        throw(ArgumentError("irls_tol must be positive."))
+    irls_max_iter >= 1 ||
+        throw(ArgumentError("irls_max_iter must be >= 1."))
 
     # ── Shared setup (identical to single-series path) ────────────────────────
     order = sortperm(interval_start)
