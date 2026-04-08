@@ -64,25 +64,13 @@ function disaggregate(m::Spline,
     w_obs ./= mean(w_obs)
 
     # Quartic (p=4) B-spline space for F(t); x(t) = F′(t) is cubic.
-    # Knot placement is the primary control over smoothness:
-    #   monthly grid (default) → m ≈ 12·years, system is overdetermined, smooth by default.
-    #   dense grid (n_knots=0) → m ≈ 2n, underdetermined, requires large smoothness.
+    # Knots at fixed monthly spacing for consistent smoothness behavior.
     p_F        = 4
     t1_min     = minimum(t1)
     t2_max     = maximum(t2)
     t_range_yr = t2_max - t1_min
-    t_nodes = if isnothing(m.n_knots)
-        # Auto monthly: 12 knots per year, minimum p_F+2 to form a valid space
-        n_auto = max(p_F + 2, round(Int, 12 * t_range_yr) + 1)
-        collect(range(t1_min, t2_max; length = n_auto))
-    elseif m.n_knots == 0
-        # Dense: one knot per unique interval endpoint (old default; requires large λ)
-        sort(unique(vcat(t1, t2)))
-    else
-        m.n_knots >= p_F + 1 ||
-            throw(ArgumentError("n_knots must be ≥ $(p_F + 1) for degree-$p_F B-splines."))
-        collect(range(t1_min, t2_max; length = m.n_knots))
-    end
+    n_knots    = max(p_F + 2, round(Int, 12 * t_range_yr) + 1)
+    t_nodes    = collect(range(t1_min, t2_max; length = n_knots))
     k_F     = KnotVector(t_nodes) + p_F * KnotVector([t_nodes[1], t_nodes[end]])
     P_F     = BSplineSpace{p_F}(k_F)
     n_basis  = dim(P_F)
@@ -224,7 +212,6 @@ function disaggregate(m::Spline,
         metadata = Dict(
             :method        => :spline,
             :smoothness    => m.smoothness,
-            :n_knots       => m.n_knots,
             :penalty_order => m.penalty_order,
             :tension       => m.tension,
             :loss_norm     => string(loss_norm),
@@ -289,16 +276,8 @@ function disaggregate(m::Spline,
     p_F        = 4
     t1_min     = minimum(t1);  t2_max = maximum(t2)
     t_range_yr = t2_max - t1_min
-    t_nodes = if isnothing(m.n_knots)
-        n_auto = max(p_F + 2, round(Int, 12 * t_range_yr) + 1)
-        collect(range(t1_min, t2_max; length = n_auto))
-    elseif m.n_knots == 0
-        sort(unique(vcat(t1, t2)))
-    else
-        m.n_knots >= p_F + 1 ||
-            throw(ArgumentError("n_knots must be ≥ $(p_F + 1) for degree-$p_F B-splines."))
-        collect(range(t1_min, t2_max; length = m.n_knots))
-    end
+    n_knots    = max(p_F + 2, round(Int, 12 * t_range_yr) + 1)
+    t_nodes    = collect(range(t1_min, t2_max; length = n_knots))
     k_F    = KnotVector(t_nodes) + p_F * KnotVector([t_nodes[1], t_nodes[end]])
     P_F    = BSplineSpace{p_F}(k_F)
     n_basis = dim(P_F)

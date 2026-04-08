@@ -116,7 +116,11 @@ function disaggregate(m::GP,
     # Predicted interval averages are C*μ_Z (not C*v, which is the Woodbury intermediate).
     if !(loss_norm isa L2DistLoss)
         ε_irls = 1e-6 * (std(y) + 1e-10)
-        w_irls = ones(n)
+        # Compute initial residuals from L2 solution
+        r          = y .- C * μ_Z
+        # Compute initial IRLS weights based on L2 residuals
+        w_irls = _irls_weights(r, loss_norm, ε_irls)
+
         for _ in 1:irls_max_iter
             W_eff      = Diagonal(w_irls .* w_obs)
             S_W        = C' * W_eff * C
@@ -139,11 +143,12 @@ function disaggregate(m::GP,
             CtWy       = C' * W_eff * y
             v          = L_M \ CtWy
             μ_Z_new    = (CtWy .- S_W * v) ./ σ²
-            r          = y .- C * v
+            r          = y .- C * μ_Z_new
             # Compute IRLS weights via LossFunctions.jl
-            w_irls = _irls_weights(r, loss_norm, ε_irls)
+            w_irls_new = _irls_weights(r, loss_norm, ε_irls)
             _irls_converged(μ_Z_new, μ_Z, irls_tol) && (μ_Z = μ_Z_new; break)
             μ_Z = μ_Z_new
+            w_irls = w_irls_new
         end
     end
 
@@ -152,9 +157,44 @@ function disaggregate(m::GP,
     L_K     = cholesky(K)
     μ_out   = K_out_Z * (L_K \ μ_Z)
 
-    r       = y .- C * v
+    # ── Sandwich standard error ───────────────────────────────────────────────────
+    # Following Spline method: use data Gram matrix S_W in quadratic form, not full M_W
+    # std(t*) = σ̂ · √(q(t*) / q̄) where q(t*) = V[:,t*]' · S_W · V[:,t*]
+    # and V = M_W^(-1) · K_out_Z'
+    # Compute residuals from kriged output (not inducing points)
+    # The issue is that C * μ_Z uses the inducing point approximation, which can have
+    # large residuals even when the final kriged output fits well. We need to use the
+    # actual predicted interval averages from the output signal.
+    r_avg = TemporalDisaggregations.interval_average(
+        DimStack((signal=DimArray(μ_out, Ti(out_dates)),); metadata=Dict()),
+        interval_start, interval_end)
+    r = aggregate_values .- r_avg
     std_val = sqrt(sum(w_obs .* r.^2) / sum(w_obs))
-    std_vec = fill(std_val, length(out_dates))
+
+    # V = M_W^(-1) · K_out_Z'  [n_ind × n_out]
+    V = L_M \ K_out_Z'  # reuse L_M from IRLS/L2 solve
+
+    # Use final IRLS weights for robust losses
+    if loss_norm isa L2DistLoss
+        S_W_eff = S_W
+    else
+        W_eff = Diagonal(w_irls .* w_obs)
+        S_W_eff = C' * W_eff * C  # [n_ind × n_ind]
+    end
+
+    # M_data_V = S_W_eff · V (data contribution to variance)
+    M_data_V = S_W_eff * V  # [n_ind × n_out]
+
+    # Compute spatial density factor q_vec
+    n_out = length(out_dates)
+    q_vec = Vector{Float64}(undef, n_out)
+    for k in 1:n_out
+        q_vec[k] = max(0.0, dot(view(M_data_V, :, k), view(V, :, k)))
+    end
+
+    # Normalize by mean and scale by residual RMS (Spline approach)
+    q_mean  = mean(q_vec)
+    std_vec = q_mean > 1e-10 ? std_val .* sqrt.(q_vec ./ q_mean) : fill(std_val, n_out)
 
     return DimStack(
         (signal = DimArray(μ_out,    Ti(out_dates)),

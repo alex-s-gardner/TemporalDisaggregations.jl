@@ -9,25 +9,30 @@ Subtypes hold algorithm-specific parameters with sensible defaults.
 abstract type DisaggregationMethod end
 
 """
-    Spline(; smoothness=1e-3, n_knots=nothing, penalty_order=3, tension=0.0)
+    Spline(; smoothness=1e-3, penalty_order=3, tension=0.0)
 
 Quartic B-spline antiderivative fit with P-spline regularization.
 
 Models the antiderivative F(t) as a B-spline so that F(t2ᵢ) − F(t1ᵢ) equals the
 observed area for each interval; the instantaneous signal is x(t) = F′(t).
 
+Knots are placed at fixed monthly spacing (~12 per year) to maintain consistent
+smoothness behavior. The spline is evaluated at the user-requested `output_period`,
+which can be finer (e.g., daily) or coarser (e.g., quarterly) than the knot spacing.
+
 The `:std` layer in the returned `DimStack` is a spatially-varying sandwich standard
 deviation: lower where observations are dense, higher where they are sparse.
 
 # Keywords
 - `smoothness::Float64 = 1e-1`: Regularization strength λ (larger = smoother).
-- `n_knots::Union{Int,Nothing} = nothing`: Number of knots (`nothing` = auto monthly, `0` = dense).
+  **Note**: When using robust losses like `L1DistLoss()`, the same `smoothness` value
+  may produce smoother results than with `L2DistLoss()`. This is expected behavior —
+  tune `smoothness` separately for each loss function.
 - `penalty_order::Int = 3`: Order of the difference penalty.
 - `tension::Float64 = 0.0`: Tension penalty strength (0 = standard P-spline).
 """
 @kwdef struct Spline <: DisaggregationMethod
     smoothness::Float64              = 1e-1
-    n_knots::Union{Int,Nothing}      = nothing
     penalty_order::Int               = 3
     tension::Float64                 = 0.0
 end
