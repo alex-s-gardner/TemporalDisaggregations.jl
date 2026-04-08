@@ -7,7 +7,7 @@ Reconstruct an instantaneous time series from interval-averaged observations.
 
 # Arguments
 - `method::DisaggregationMethod`: Algorithm configuration. One of:
-  - `Spline(; smoothness=1e-1, n_knots, penalty_order, tension)`
+  - `Spline(; smoothness=1e-1, penalty_order, tension)`
   - `Sinusoid(; smoothness_interannual)`
   - `GP(; kernel, obs_noise, n_quad)`
 - `aggregate_values`: Vector of n observed averages over each interval.
@@ -16,6 +16,9 @@ Reconstruct an instantaneous time series from interval-averaged observations.
   Common choices: `L2DistLoss()` (least squares), `L1DistLoss()` (robust to outliers),
   `HuberLoss(δ)` (hybrid - L2 for small residuals, L1 for large). For Huber loss,
   specify the threshold δ (default 1.345 achieves 95% efficiency at the normal distribution).
+  **Note**: Robust losses (L1, Huber) use IRLS with a fixed penalty term. The same `smoothness`
+  parameter may produce different effective smoothness for different loss functions. Tune
+  `smoothness` separately for each loss type if matching visual smoothness is important.
 - `output_period::Dates.Period = Month(1)`: Output grid spacing.
 - `output_start`: Grid anchor `Date` or `DateTime` (default `nothing`).
 - `output_end`: Last date of the output grid as `Date` or `DateTime`. Defaults

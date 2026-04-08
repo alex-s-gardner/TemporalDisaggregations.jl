@@ -144,7 +144,6 @@ end
     @testset "Struct construction and defaults" begin
         s = Spline()
         @test s.smoothness == 1e-1
-        @test s.n_knots === nothing
         @test s.penalty_order == 3
         @test s.tension == 0.0
 
@@ -532,17 +531,6 @@ end
             end
         end
 
-        @testset "n_knots: nothing / 0 / 10 / 30 all valid; n_knots=3 throws" begin
-            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
-            y = [sin(2π * i / 12) for i in 1:24]
-            for nk in [nothing, 0, 10, 30]
-                r = disaggregate(Spline(smoothness=1e-3, n_knots=nk), y, t1, t2)
-                @test all(isfinite, r.signal.data)
-                @test all(r.std.data .>= 0)
-            end
-            # n_knots=3 < p_F+1=5 → ArgumentError inside disaggregate
-            @test_throws ArgumentError disaggregate(Spline(n_knots=3), y, t1, t2)
-        end
 
         # ── Robustness to outliers ───────────────────────────────────────────
 
@@ -617,13 +605,12 @@ end
         @testset "metadata reflects all constructor/kwarg arguments" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
             r = disaggregate(
-                    Spline(smoothness=0.2, n_knots=20, penalty_order=2, tension=1.5),
+                    Spline(smoothness=0.2, penalty_order=2, tension=1.5),
                     ones(12), t1, t2;
                     loss_norm=L1DistLoss(), output_period=Week(2))
             m = metadata(r)
             @test m[:method]        == :spline
             @test m[:smoothness]    == 0.2
-            @test m[:n_knots]       == 20
             @test m[:penalty_order] == 2
             @test m[:tension]       == 1.5
             @test m[:loss_norm]     == "L1DistLoss"

@@ -79,10 +79,14 @@ end
 """
     _irls_weights(r, loss, ε)
 
-Compute IRLS weights for robust loss function via `w = 1 / (|∂L/∂r| + ε)`.
+Compute IRLS weights for robust regression.
 
-The weight is the reciprocal of the loss derivative magnitude, which implements
-Iteratively Reweighted Least Squares (IRLS) for robust regression.
+For L1DistLoss: w[i] = 1 / (|r[i]| + ε)  (standard IRLS for L1)
+For smooth losses: w[i] = 1 / (|∂L/∂r[i]| + ε)  (derivative-based)
+
+The L1 case requires special handling because sign(r) has constant magnitude,
+which would produce uniform weights. The correct IRLS weight for L1 is
+inversely proportional to the residual magnitude.
 
 # Arguments
 - `r::AbstractVector`: Residual vector
@@ -93,11 +97,17 @@ Iteratively Reweighted Least Squares (IRLS) for robust regression.
 Vector of IRLS weights
 
 # Examples
-For L1 loss (L1DistLoss), deriv = sign(r), so w ≈ 1 for all r.
+For L1 loss (L1DistLoss), w = 1 / (|r| + ε), giving robustness to outliers.
 For L2 loss (L2DistLoss), deriv = r, so w = 1 / (|r| + ε).
 For Huber loss, deriv is piecewise: r for |r| ≤ δ, δ·sign(r) for |r| > δ.
 """
 function _irls_weights(r::AbstractVector, loss::DistanceLoss, ε::Float64)
+    # Special case for L1: weights must be 1/|r| for proper robustness
+    if loss isa L1DistLoss
+        return @. 1.0 / (abs(r) + ε)
+    end
+
+    # For smooth losses (Huber, L2, etc), use derivative-based formula
     derivs = deriv.(Ref(loss), r)
     return @. 1.0 / (abs(derivs) + ε)
 end
