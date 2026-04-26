@@ -54,6 +54,54 @@ deviation: lower where observations are dense, higher where they are sparse.
 end
 
 """
+    PiecewiseLinear(; smoothness=1e-6, n_knots=0, tension=0.0)
+
+Piecewise linear disaggregation using linear hat functions with first-order
+difference penalties. Preserves sharp corners and triangular patterns.
+
+Ideal for time series with monotonic increase/decrease patterns (triangular peaks)
+superimposed on trends. Unlike `Spline` (smooth curves) or `GP` (infinitely smooth),
+this method produces C⁰ continuous signals with piecewise constant slopes, preserving
+sharp transitions.
+
+The signal x(t) = Σₖ θₖ φₖ(t) where φₖ(t) are linear hat functions (tent functions)
+on a uniform knot grid. The first-order difference penalty ‖D₁ θ‖² penalizes slope
+changes between adjacent segments, encouraging piecewise linear patterns.
+
+All interval integrals are solved analytically (no quadrature) — comparable speed to
+`Spline` but preserves triangular peaks that `Spline` and `GP` would over-smooth.
+
+The `:std` layer in the returned `DimStack` is a spatially-varying sandwich standard
+deviation: lower where observations are dense, higher where they are sparse.
+
+# Keywords
+- `smoothness::Float64 = 1e-6`: Regularization strength λ. Lower values preserve
+  sharper corners. Scaled by ‖C'C‖/n to be dimensionless across datasets. Default
+  is much lower than `Spline` to minimize smoothing of triangular patterns.
+- `n_knots::Int = 0`: Number of knots for basis functions. If 0 (default),
+  auto-computed from time span and `output_period` (approximately one knot per period).
+- `tension::Float64 = 0.0`: Tension parameter ∈ [0,1]. Blends first-order
+  penalty (0.0) toward pure interpolation (1.0). Higher values reduce smoothing.
+
+# Examples
+```julia
+# Preserve sharp triangular patterns with minimal smoothing
+result = disaggregate(PiecewiseLinear(smoothness=1e-8), values, t1, t2)
+
+# Auto knot spacing tied to monthly output
+result = disaggregate(PiecewiseLinear(), values, t1, t2; output_period=Month(1))
+
+# Weekly output with explicit knot count
+result = disaggregate(PiecewiseLinear(n_knots=200), values, t1, t2; output_period=Week(1))
+```
+"""
+@kwdef struct PiecewiseLinear <: DisaggregationMethod
+    smoothness::Float64 = 1e-6
+    n_knots::Int = 0
+    tension::Float64 = 0.0
+end
+
+"""
     GP(; kernel=with_lengthscale(Matern52Kernel(), 1/6), obs_noise=1.0, n_quad=5)
 
 Sparse inducing-point Gaussian Process (DTC approximation) on a monthly grid.

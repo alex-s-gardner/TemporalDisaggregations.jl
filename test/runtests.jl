@@ -357,16 +357,191 @@ end
     end
 
     # ─────────────────────────────────────────────────────────────────────────
+    @testset "PiecewiseLinear method" begin
+
+        @testset "Constant signal recovery" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = fill(5.0, 24)
+            result = disaggregate(PiecewiseLinear(smoothness=1e-8), y, t1, t2)
+            @test result isa DimStack
+            @test result.signal isa DimArray
+            @test result.std    isa DimArray
+            @test hasdim(result.signal, Ti)
+            @test length(result.signal) == length(result.std)
+            # Mean of recovered signal should be close to 5.0
+            @test mean(result.signal) ≈ 5.0 atol=0.1
+            # std should be non-negative
+            @test all(result.std.data .>= 0)
+        end
+
+        @testset "Triangular pattern preservation vs Spline" begin
+            # Generate sawtooth wave: sharp peaks every 6 months
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            t1_dec = TD.yeardecimal.(t1)
+            t2_dec = TD.yeardecimal.(t2)
+
+            # Triangular signal with sharp corners: x(t) = 2*|mod(t,0.5) - 0.25|
+            y = [exact_average(t -> 2.0 * abs(mod(t, 0.5) - 0.25), t1_dec[i], t2_dec[i])
+                 for i in 1:24]
+
+            # Fit with PiecewiseLinear (minimal smoothing)
+            r_pwl = disaggregate(PiecewiseLinear(smoothness=1e-8), y, t1, t2)
+            # Fit with Spline (default smoothing)
+            r_spline = disaggregate(Spline(smoothness=1e-2), y, t1, t2)
+
+            # PiecewiseLinear should have higher peak-to-peak range (less smoothing)
+            pwl_range = maximum(r_pwl.signal) - minimum(r_pwl.signal)
+            spline_range = maximum(r_spline.signal) - minimum(r_spline.signal)
+            @test pwl_range > spline_range
+
+            # Both should be valid
+            @test all(isfinite, r_pwl.signal)
+            @test all(r_pwl.std.data .>= 0)
+        end
+
+        @testset "L1 vs L2 agree on clean data" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [3.0 + sin(2π * (i / 12.0)) for i in 1:24]
+            r_l2 = disaggregate(PiecewiseLinear(), y, t1, t2; loss_norm = L2DistLoss())
+            r_l1 = disaggregate(PiecewiseLinear(), y, t1, t2; loss_norm = L1DistLoss())
+            @test cor(r_l2.signal.data, r_l1.signal.data) > 0.99
+        end
+
+        @testset "L1 robustness to outliers" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y_clean = [sin(2π * i / 12) for i in 1:24]
+            y_outliers = copy(y_clean)
+            y_outliers[[5, 15]] .+= [10.0, -8.0]  # large outliers
+
+            r_truth = disaggregate(PiecewiseLinear(), y_clean, t1, t2)
+            r_l2    = disaggregate(PiecewiseLinear(), y_outliers, t1, t2;
+                                   loss_norm=L2DistLoss())
+            r_l1    = disaggregate(PiecewiseLinear(), y_outliers, t1, t2;
+                                   loss_norm=L1DistLoss())
+
+            # L1 should be closer to clean signal than L2, or at least comparable
+            err_l2 = norm(r_l2.signal.data - r_truth.signal.data)
+            err_l1 = norm(r_l1.signal.data - r_truth.signal.data)
+            @test err_l1 <= err_l2 * 1.01  # Allow 1% tolerance for numerical effects
+        end
+
+        @testset "output_period variations" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = ones(12)
+
+            r_monthly = disaggregate(PiecewiseLinear(), y, t1, t2;
+                                     output_period=Month(1))
+            r_weekly  = disaggregate(PiecewiseLinear(), y, t1, t2;
+                                     output_period=Week(1))
+            r_daily   = disaggregate(PiecewiseLinear(), y, t1, t2;
+                                     output_period=Day(1))
+
+            @test length(r_weekly.signal) > length(r_monthly.signal)
+            @test length(r_daily.signal)  > length(r_weekly.signal)
+            @test all(isfinite, r_daily.signal)
+            @test collect(dims(r_daily.signal, Ti))[1] isa Date
+        end
+
+        @testset "Explicit n_knots parameter" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+
+            # Auto knots
+            r_auto = disaggregate(PiecewiseLinear(), y, t1, t2)
+            # Explicit knots (more than auto)
+            r_fine = disaggregate(PiecewiseLinear(n_knots=50), y, t1, t2)
+            # Minimal knots
+            r_coarse = disaggregate(PiecewiseLinear(n_knots=5), y, t1, t2)
+
+            @test all(isfinite, r_auto.signal)
+            @test all(isfinite, r_fine.signal)
+            @test all(isfinite, r_coarse.signal)
+
+            # More knots should allow more flexibility
+            @test metadata(r_fine)[:n_knots] == 50
+            @test metadata(r_coarse)[:n_knots] == 5
+        end
+
+        @testset "tension > 0 returns valid result" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            r_notension = disaggregate(PiecewiseLinear(tension=0.0), y, t1, t2)
+            r_tension   = disaggregate(PiecewiseLinear(tension=0.5), y, t1, t2)
+            @test length(r_tension.signal) == length(r_notension.signal)
+            @test all(isfinite, r_tension.signal)
+            # Tension should reduce variability
+            @test std(r_tension.signal) <= std(r_notension.signal) + 0.1
+        end
+
+        @testset "Variable asymmetry handling" begin
+            # Create asymmetric triangular pattern
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 36)
+            t1_dec = TD.yeardecimal.(t1)
+            t2_dec = TD.yeardecimal.(t2)
+
+            # Asymmetric sawtooth: steep rise (0.2 units), gentle fall (0.8 units)
+            function asymmetric_triangle(t)
+                phase = mod(t, 1.0)
+                if phase < 0.2
+                    return 5.0 * phase  # steep rise
+                else
+                    return 1.0 - 1.25 * (phase - 0.2)  # gentle fall
+                end
+            end
+
+            y = [exact_average(asymmetric_triangle, t1_dec[i], t2_dec[i])
+                 for i in 1:36]
+
+            result = disaggregate(PiecewiseLinear(smoothness=1e-8), y, t1, t2)
+            @test all(isfinite, result.signal)
+            @test all(result.std.data .>= 0)
+            # Should recover both steep and gentle slopes
+            @test maximum(result.signal) - minimum(result.signal) > 0.5
+        end
+
+        @testset "Metadata includes method parameters" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = ones(12)
+            result = disaggregate(PiecewiseLinear(smoothness=1e-5, tension=0.3),
+                                 y, t1, t2; output_period=Week(1))
+            meta = metadata(result)
+            @test meta[:method] == :piecewise_linear
+            @test meta[:smoothness] == 1e-5
+            @test meta[:tension] == 0.3
+            @test haskey(meta, :n_knots)
+            @test meta[:output_period] == Week(1)
+        end
+
+        @testset "Edge case: too few knots" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = ones(12)
+            # n_knots < 3 should error
+            @test_throws ArgumentError disaggregate(PiecewiseLinear(n_knots=2), y, t1, t2)
+        end
+
+        @testset "Huber loss returns valid result" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+            result = disaggregate(PiecewiseLinear(), y, t1, t2;
+                                  loss_norm = HuberLoss(1.0))
+            @test all(result.std.data .>= 0.0)
+            @test all(isfinite, result.signal)
+        end
+    end
+
+    # ─────────────────────────────────────────────────────────────────────────
     @testset "All methods callable via disaggregate" begin
         t1, t2 = make_monthly_intervals(Date(2021, 1, 1), 12)
         y = ones(12)
 
         r_spline = disaggregate(Spline(), y, t1, t2)
         r_sin    = disaggregate(Sinusoid(), y, t1, t2)
+        r_pwl    = disaggregate(PiecewiseLinear(), y, t1, t2)
         r_gp     = disaggregate(GP(), y, t1, t2)
 
         @test r_spline isa DimStack && hasdim(r_spline.signal, Ti)
         @test haskey(metadata(r_sin), :mean)
+        @test r_pwl isa DimStack && hasdim(r_pwl.signal, Ti)
         @test r_gp.std isa DimArray
     end
 
@@ -376,7 +551,7 @@ end
         @testset "Validation" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 6)
             y = ones(6)
-            for method in [Spline(), Sinusoid(), GP()]
+            for method in [Spline(), Sinusoid(), PiecewiseLinear(), GP()]
                 @test_throws DimensionMismatch disaggregate(method, y, t1, t2; weights = ones(5))
                 @test_throws ArgumentError    disaggregate(method, y, t1, t2; weights = [1,1,1, 0,1,1.0])
                 @test_throws ArgumentError    disaggregate(method, y, t1, t2; weights = [1,1,1,-1,1,1.0])
@@ -386,7 +561,7 @@ end
         @testset "Uniform weights match no weights (all methods)" begin
             t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
             y = [sin(2π * i / 12) for i in 1:24]
-            for method in [Spline(), Sinusoid(), GP(obs_noise=0.1)]
+            for method in [Spline(), Sinusoid(), PiecewiseLinear(), GP(obs_noise=0.1)]
                 r_none  = disaggregate(method, y, t1, t2)
                 r_ones  = disaggregate(method, y, t1, t2; weights = ones(24))
                 r_small = disaggregate(method, y, t1, t2; weights = fill(1e-4, 24))

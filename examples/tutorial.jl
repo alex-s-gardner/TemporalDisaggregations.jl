@@ -82,18 +82,20 @@ end
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Section 2 — Figure 1: Small n, all three methods
+# Section 2 — Figure 1: Small n, all four methods
 # ─────────────────────────────────────────────────────────────────────────────
 # When to use:
 #   Sparse, irregular, long-interval data (satellite revisits, sparse archives).
 #   All methods return a spatially-varying sandwich std (lower in dense regions,
-#   higher in sparse regions).  Sinusoid is fastest but assumes a fixed seasonal
-#   shape.  Spline makes the fewest assumptions.
+#   higher in sparse regions). PiecewiseLinear preserves sharp corners; Sinusoid
+#   is fastest but assumes fixed seasonal shape; Spline makes fewest assumptions.
 begin
     println("\n── Figure 1: small n, all four methods ──")
 
     r_sp  = disaggregate(Spline(), y_small, t1_small, t2_small)
     r_sin = disaggregate(Sinusoid(), y_small, t1_small, t2_small)
+    # PiecewiseLinear: minimal smoothing to preserve sharp corners
+    r_pwl = disaggregate(PiecewiseLinear(smoothness=1e-8), y_small, t1_small, t2_small)
     # For sparse long intervals (3–8 months), the kernel must have:
     #   (1) annual periodic structure — captures seasonal cycles
     #   (2) lengthscale >> interval length — avoids posterior collapse
@@ -106,6 +108,7 @@ begin
     t_out_s  = t_axis(r_sp)
     sp_μ     = r_sp.signal.data;    sp_σ    = r_sp.std.data
     sin_μ    = r_sin.signal.data;   sin_σ   = r_sin.std.data
+    pwl_μ    = r_pwl.signal.data;   pwl_σ   = r_pwl.std.data
     gp_μ     = r_gp.signal.data;    gp_σ    = r_gp.std.data
 
     # Build interval line-segments for the "input" panel.
@@ -117,8 +120,9 @@ begin
 
     segs_s = make_segs(t1_small, t2_small, y_small)
 
-    fig1 = Figure(size = (1000, 720), fontsize = 12);
+    fig1 = Figure(size = (1200, 720), fontsize = 12);
 
+    # Row 1: Input, Spline, Sinusoid
     ax1a = Axis(fig1[1, 1]; xlabel = "Year", ylabel = "Signal",
         title = "Input: $n_small sparse intervals (≈ 3–8 months each)")
     linesegments!(ax1a, segs_s; color = (:black, 0.4), linewidth = 2.5,
@@ -137,7 +141,7 @@ begin
         label = "True signal")
     axislegend(ax1b; position = :lt, labelsize = 11)
 
-    ax1c = Axis(fig1[2, 1]; xlabel = "Year", ylabel = "Signal",
+    ax1c = Axis(fig1[1, 3]; xlabel = "Year", ylabel = "Signal",
         title = "Sinusoid — fastest; assumes seasonal shape")
     band!(ax1c, t_out_s, sin_μ .- 2sin_σ, sin_μ .+ 2sin_σ;
         color = (:darkorange, 0.2), label = "± 2σ")
@@ -147,15 +151,26 @@ begin
         label = "True signal")
     axislegend(ax1c; position = :lt, labelsize = 11)
 
-    ax1d = Axis(fig1[2, 2]; xlabel = "Year", ylabel = "Signal",
-        title = "GP — flexible nonparametric reconstruction")
-    band!(ax1d, t_out_s, gp_μ .- 2gp_σ, gp_μ .+ 2gp_σ;
-        color = (:crimson, 0.2), label = "± 2σ")
-    lines!(ax1d, t_out_s, gp_μ; color = :crimson, linewidth = 2.5,
-        label = "GP mean")
+    # Row 2: PiecewiseLinear, GP
+    ax1d = Axis(fig1[2, 1]; xlabel = "Year", ylabel = "Signal",
+        title = "PiecewiseLinear — preserves sharp corners")
+    band!(ax1d, t_out_s, pwl_μ .- 2pwl_σ, pwl_μ .+ 2pwl_σ;
+        color = (:purple, 0.2), label = "± 2σ")
+    lines!(ax1d, t_out_s, pwl_μ; color = :purple, linewidth = 2.5,
+        label = "PiecewiseLinear mean")
     lines!(ax1d, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
         label = "True signal")
     axislegend(ax1d; position = :lt, labelsize = 11)
+
+    ax1e = Axis(fig1[2, 2]; xlabel = "Year", ylabel = "Signal",
+        title = "GP — flexible nonparametric reconstruction")
+    band!(ax1e, t_out_s, gp_μ .- 2gp_σ, gp_μ .+ 2gp_σ;
+        color = (:crimson, 0.2), label = "± 2σ")
+    lines!(ax1e, t_out_s, gp_μ; color = :crimson, linewidth = 2.5,
+        label = "GP mean")
+    lines!(ax1e, t_decyear, signal; color = (:black, 0.2), linewidth = 1,
+        label = "True signal")
+    axislegend(ax1e; position = :lt, labelsize = 11)
 
     display(fig1)
     save(joinpath(fig_dir, "fig1_small_n_four_methods.png"), fig1, px_per_unit = 2)
@@ -558,5 +573,69 @@ axislegend(ax8b; position = :lt, labelsize = 10)
 
 save(joinpath(fig_dir, "fig8_weights.png"), fig8, px_per_unit = 2)
 println("Saved fig8_weights.png")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Section 10 — Figure 9: PiecewiseLinear — preserving triangular patterns
+# ─────────────────────────────────────────────────────────────────────────────
+# smoothness (λ): lower = sharper corners. Default 1e-6 preserves most structure.
+# n_knots: higher = more flexibility. Auto-computed from output_period by default.
+# tension (τ): blend toward pure interpolation (ridge penalty).
+#
+# Compare PiecewiseLinear (sharp corners) vs Spline (smooth curves) on triangular
+# signal with sharp peaks every 6 months.
+
+println("\n── Figure 9: PiecewiseLinear vs Spline on triangular pattern ──")
+
+# Generate triangular wave signal
+t_tri = collect(Date(2020, 1, 1):Day(7):Date(2023, 1, 1))  # weekly
+t_tri_dec = yeardecimal.(t_tri)
+# Sawtooth: sharp rise then sharp fall every 6 months
+signal_tri = [2.0 * abs(mod(t, 0.5) - 0.25) for t in t_tri_dec]
+
+# Create monthly intervals with noise
+n_tri = 36
+t1_tri, t2_tri = make_monthly_intervals(Date(2020, 1, 1), n_tri)
+y_tri = [mean(signal_tri[(t1_tri[i] .<= t_tri) .& (t_tri .<= t2_tri[i])]) for i in 1:n_tri]
+y_tri .+= 0.05 .* randn(n_tri)  # add noise
+
+# Fit with PiecewiseLinear (minimal smoothing) and Spline (default smoothing)
+r_pwl_tri = disaggregate(PiecewiseLinear(smoothness=1e-8), y_tri, t1_tri, t2_tri)
+r_sp_tri  = disaggregate(Spline(smoothness=1e-2), y_tri, t1_tri, t2_tri)
+
+t_out_tri = t_axis(r_pwl_tri)
+pwl_tri_μ = r_pwl_tri.signal.data;  pwl_tri_σ = r_pwl_tri.std.data
+sp_tri_μ  = r_sp_tri.signal.data;   sp_tri_σ  = r_sp_tri.std.data
+
+# Build interval segments
+segs_tri = make_segs(t1_tri, t2_tri, y_tri)
+
+fig9 = Figure(size = (1000, 420), fontsize = 12)
+
+ax9a = Axis(fig9[1, 1]; xlabel = "Year", ylabel = "Signal",
+    title = "Spline (smoothness=1e-2) — over-smooths sharp corners")
+linesegments!(ax9a, segs_tri; color = (:black, 0.4), linewidth = 2,
+    label = "Interval averages (input)")
+band!(ax9a, t_out_tri, sp_tri_μ .- 2sp_tri_σ, sp_tri_μ .+ 2sp_tri_σ;
+    color = (:steelblue, 0.2))
+lines!(ax9a, t_out_tri, sp_tri_μ; color = :steelblue, linewidth = 2.5,
+    label = "Spline (smooth curves)")
+lines!(ax9a, t_tri_dec, signal_tri; color = (:black, 0.2), linewidth = 1,
+    label = "True signal (triangular)")
+axislegend(ax9a; position = :lt, labelsize = 11)
+
+ax9b = Axis(fig9[1, 2]; xlabel = "Year", ylabel = "Signal",
+    title = "PiecewiseLinear (smoothness=1e-8) — preserves sharp peaks")
+linesegments!(ax9b, segs_tri; color = (:black, 0.4), linewidth = 2,
+    label = "Interval averages (input)")
+band!(ax9b, t_out_tri, pwl_tri_μ .- 2pwl_tri_σ, pwl_tri_μ .+ 2pwl_tri_σ;
+    color = (:purple, 0.2))
+lines!(ax9b, t_out_tri, pwl_tri_μ; color = :purple, linewidth = 2.5,
+    label = "PiecewiseLinear (sharp corners)")
+lines!(ax9b, t_tri_dec, signal_tri; color = (:black, 0.2), linewidth = 1,
+    label = "True signal (triangular)")
+axislegend(ax9b; position = :lt, labelsize = 11)
+
+save(joinpath(fig_dir, "fig9_piecewise_linear_detail.png"), fig9, px_per_unit = 2)
+println("Saved fig9_piecewise_linear_detail.png")
 
 println("\nDone. All figures saved to $(fig_dir)/")
