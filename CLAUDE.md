@@ -28,11 +28,36 @@ julia --project=docs docs/make.jl
 
 **Requirements:** Julia ≥ 1.10. Test environment (`test/Project.toml`) adds only stdlib `Test`; the test file also imports `TemporalDisaggregations`, `DimensionalData`, `LinearAlgebra`, and `Statistics` from the main `Project.toml`. `CairoMakie` is in the main `Project.toml` but only used in `examples/`.
 
+**Performance optimization:** Optional BLAS acceleration via package extensions. Add `using AppleAccelerate` (macOS) or `using MKL` to redirect OpenBLAS → native accelerated libraries. No code changes needed; the extension auto-activates when the corresponding package is loaded.
+
+## File Structure
+
+```
+src/
+├── TemporalDisaggregations.jl    # main module, exports, includes
+├── methods.jl                     # abstract type and method structs (Spline, Sinusoid, GP)
+├── disaggregate.jl                # generic function declaration + docstring
+├── disaggregate_spline.jl         # Spline method implementation
+├── disaggregate_sinusoid.jl       # Sinusoid method implementation  
+├── disaggregate_gp.jl             # GP method implementation
+├── utils.jl                       # shared helpers (IRLS, date grids, P-spline matrices)
+└── precompile.jl                  # precompilation directives
+
+ext/                               # package extensions for BLAS optimization
+├── TemporalDisaggregationsAppleAccelerateExt.jl
+└── TemporalDisaggregationsMKLExt.jl
+
+test/runtests.jl                   # all tests in one file
+examples/tutorial.jl               # main demo (generates 8 figures)
+benchmarks/benchmark.jl            # performance benchmarks
+docs/                              # DocumenterVitepress docs
+```
+
 ## Architecture
 
 This is a Julia package that reconstructs instantaneous time series from interval-averaged observations (temporal disaggregation). The core problem: given measurements averaged over overlapping time intervals, recover the underlying instantaneous signal.
 
-**Exports:** `disaggregate`, `yeardecimal`, `interval_average`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`.
+**Exports:** `disaggregate`, `yeardecimal`, `interval_average`, `redundancy_filter`, `DisaggregationMethod`, `Spline`, `Sinusoid`, `GP`.
 
 **Public API:** `disaggregate(method::DisaggregationMethod, aggregate_values, interval_start, interval_end; loss_norm=L2DistLoss(), output_period=Month(1), output_start=nothing, output_end=nothing, weights=nothing)` — dispatches on the algorithm struct type. Method-specific parameters live in the struct; shared kwargs (`loss_norm`, `output_period`, `output_start`, `output_end`, `weights`) stay as function kwargs. `weights` is a length-n vector of positive per-observation weights (e.g. `1 ./ σ²_obs`); for robust losses they are multiplied element-wise with the IRLS weights.
 
@@ -86,7 +111,9 @@ When using robust losses (non-L2), computed from the final IRLS solution.
 - `_difference_matrix(m, r)` — builds the r-th order difference matrix for P-spline regularization.
 - `_irls_weights` / `_irls_converged` — shared IRLS helpers used by all methods.
 
-**Post-processing:** `interval_average(result, t1, t2)` — **exported**; trapezoidal re-integration of a `disaggregate` result over arbitrary intervals. Useful for computing residuals or forward-checking fit quality.
+**Post-processing:**
+- `interval_average(result, t1, t2)` — **exported**; trapezoidal re-integration of a `disaggregate` result over arbitrary intervals. Useful for computing residuals or forward-checking fit quality.
+- `redundancy_filter(interval_error, interval_start, interval_end; interval_bins, temporal_overlap, bin_count_threshold)` — **exported**; pre-filter redundant observations using interval-stratified sliding temporal windows. Prioritizes low-uncertainty observations. Returns a `BitVector` mask of observations to keep.
 
 **Other helpers** (in their respective method files):
 - `_interval_sin_integral`, `_interval_cos_integral`, `_year_overlap_fraction` in `disaggregate_sinusoid.jl` — closed-form interval averages for the sinusoid design matrix.
