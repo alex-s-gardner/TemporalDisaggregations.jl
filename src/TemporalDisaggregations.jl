@@ -15,12 +15,13 @@ module TemporalDisaggregations
     include("methods.jl")
     include("disaggregate_spline.jl")
     include("disaggregate_sinusoid.jl")
+    include("disaggregate_piecewise_linear.jl")
     include("disaggregate_gp.jl")
     include("disaggregate.jl")
     include("precompile.jl")
 
     export disaggregate, yeardecimal,
-        DisaggregationMethod, Spline, Sinusoid, GP,
+        DisaggregationMethod, Spline, Sinusoid, PiecewiseLinear, GP,
         interval_average, redundancy_filter
 
 end
