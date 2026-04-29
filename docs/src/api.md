@@ -4,9 +4,9 @@
 
 ```@docs
 disaggregate
-yeardecimal
 DisaggregationMethod
 Spline
+PiecewiseLinear
 Sinusoid
 GP
 interval_average

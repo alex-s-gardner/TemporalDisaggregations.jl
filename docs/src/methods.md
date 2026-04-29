@@ -1,6 +1,6 @@
 # Methods
 
-All three methods share the same interface and return type. Switch methods by passing a different algorithm struct as the first argument to `disaggregate`.
+All four methods share the same interface and return type. Switch methods by passing a different algorithm struct as the first argument to `disaggregate`.
 
 ## Comparison
 
@@ -9,6 +9,7 @@ Benchmarks: 20-year span, `output_period=Week(1)`, 8 threads (Julia 1.12). Time 
 | Method | Pros | Cons | n = 10k | n = 100k | n = 1M |
 |--------|------|------|:-------:|:--------:|:------:|
 | `Spline` | No kernel required; optional tension suppresses oscillation near sparse gaps | Design matrix O(n × n\_knots); can oscillate without tension | **12 ms**<br>19 MB | **103 ms**<br>192 MB | **807 ms**<br>1.9 GB |
+| `PiecewiseLinear` | Preserves sharp corners; analytical integrals (no quadrature); lowest peak memory | C⁰ only (no smooth curves); poor fit for smooth signals | **~20 ms**<br>~3 MB | **~100 ms**<br>~20 MB | **~800 ms**<br>~200 MB |
 | `Sinusoid` | Analytical integrals (no quadrature); interpretable parameters (amplitude, phase, trend, anomalies); lowest peak memory | Assumes annual periodicity; poor fit for non-sinusoidal signals | **61 ms**<br>2 MB | **133 ms**<br>19 MB | **2.4 s**<br>192 MB |
 | `GP` | Arbitrary KernelFunctions.jl kernels; most flexible | O(n·m·q + m³) Cholesky — memory-limited above n ≈ 50 000 at weekly output | **2.0 s**<br>195 MB | **13.3 s**<br>1.9 GB | —<br>(>8 GB) |
 
@@ -40,6 +41,23 @@ result = disaggregate(Spline(
 ```
 
 ![Tension-spline reconstruction](./assets/tension_spline_detail.png)
+
+## Piecewise-Linear (`PiecewiseLinear`)
+
+Preserves sharp corners and triangular patterns. Unlike [`Spline`](@ref) (smooth curves) or [`GP`](@ref) (infinitely smooth), this produces C⁰ continuous signals with piecewise constant slopes — ideal for time series with monotonic increase/decrease (triangular peaks) superimposed on trends.
+
+**Example use cases:**
+- Ice flow velocity transients with sharp acceleration/deceleration events
+- Discrete signals with sharp transitions (e.g., step-and-ramp functions)
+- Any data where Spline or GP over-smooth important sharp features
+
+```julia
+result = disaggregate(PiecewiseLinear(smoothness=1e-8), y, t1, t2)
+```
+
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
+
+![Piecewise-linear reconstruction](./assets/piecewise_linear_detail.png)
 
 ## Sinusoid (`Sinusoid`)
 

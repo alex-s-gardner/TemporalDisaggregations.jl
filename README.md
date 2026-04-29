@@ -4,7 +4,7 @@
 
 Reconstruct **instantaneous** time series from **interval-averaged** observations — measurements that represent the average of a signal over a time window rather than a point-in-time snapshot.
 
-![Overview of all three methods](docs/images/overview.png)
+![Overview of all four methods](docs/images/overview.png)
 
 ## Installation
 
@@ -53,7 +53,7 @@ lines(result[:signal])
 
 ## Methods
 
-All three methods share the same interface and return type. Switch methods by passing a different algorithm struct [`Spline()`, `Sinusoid()`, `GP()`] as the first argument.
+All four methods share the same interface and return type. Switch methods by passing a different algorithm struct [`Spline()`, `PiecewiseLinear()`, `Sinusoid()`, `GP()`] as the first argument.
 
 ### B-spline (`Spline`)
 
@@ -83,6 +83,24 @@ result = disaggregate(Spline(
 ```
 
 ![Tension-spline reconstruction](docs/images/tension_spline_detail.png)
+
+### Piecewise-Linear (`PiecewiseLinear`)
+
+Preserves sharp corners and triangular patterns using linear hat functions with first-order difference penalties. Unlike B-spline (smooth curves) or GP (infinitely smooth), this produces C⁰ continuous signals with piecewise constant slopes.
+
+Ideal for time series with monotonic increase/decrease patterns (triangular peaks) superimposed on trends — e.g., ice flow velocity transients, discrete event signals, or any data with sharp transitions that Spline and GP would over-smooth.
+
+```julia
+result = disaggregate(PiecewiseLinear(
+    smoothness = 1e-6,      # much lower default than Spline (preserves sharp features)
+    n_knots    = 0,         # auto-computed from output_period
+    tension    = 0.0,       # blend toward pure interpolation (0 = standard)
+), y, t1, t2; loss_norm = L2DistLoss())
+```
+
+**Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
+
+![Piecewise-linear reconstruction](docs/images/piecewise_linear_detail.png)
 
 ### Sinusoid (`Sinusoid`)
 
@@ -246,6 +264,7 @@ Benchmarks: 20-year span, `output_period=Week(1)`, 8 threads (Julia 1.12, Apple 
 | Method | Pros | Cons | n = 10k | n = 100k | n = 1M |
 |--------|------|------|:-------:|:--------:|:------:|
 | `Spline` | No kernel required; optional tension suppresses oscillation near sparse gaps | Design matrix O(n × n\_knots); can oscillate without tension | **14 ms**<br>19 MB | **135 ms**<br>192 MB | **1.08 s**<br>1.9 GB |
+| `PiecewiseLinear` | Preserves sharp corners; analytical integrals (no quadrature); lowest peak memory | C⁰ only (no smooth curves); poor fit for smooth signals | **~20 ms**<br>~3 MB | **~100 ms**<br>~20 MB | **~800 ms**<br>~200 MB |
 | `Sinusoid` | Analytical integrals (no quadrature); interpretable parameters (amplitude, phase, trend, anomalies); lowest peak memory | Assumes annual periodicity; poor fit for non-sinusoidal signals | **34 ms**<br>2 MB | **161 ms**<br>19 MB | **2.17 s**<br>192 MB |
 | `GP` | Arbitrary KernelFunctions.jl kernels; most flexible | O(n·m·q + m³) Cholesky — memory-limited above n ≈ 50 000 at weekly output | **2.00 s**<br>195 MB | **15.2 s**<br>1.9 GB | —<br>(>8 GB) |
 

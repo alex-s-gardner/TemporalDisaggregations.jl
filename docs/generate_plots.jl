@@ -32,6 +32,7 @@ y        = [mean(signal[(t1[i] .<= t_daily) .& (t_daily .<= t2[i])]) for i in 1:
 # ── Disaggregate ──────────────────────────────────────────────────────────────
 r_spline = disaggregate(Spline(smoothness = 1e-3), y, t1, t2)
 r_sin    = disaggregate(Sinusoid(smoothness_interannual = 1e-2), y, t1, t2)
+r_pwl    = disaggregate(PiecewiseLinear(smoothness = 1e-7), y, t1, t2)
 
 k = 15.0^2 * PeriodicKernel(r=[0.5]) * with_lengthscale(Matern52Kernel(), 3.0) +
      5.0^2 * with_lengthscale(Matern52Kernel(), 2.0) +
@@ -44,6 +45,7 @@ r_gp = disaggregate(GP(kernel = k, obs_noise = noise_std^2, n_quad = 5), y, t1, 
 
 sp_μ    = r_spline.signal.data
 sin_μ   = r_sin.signal.data
+pwl_μ   = r_pwl.signal.data
 gp_μ    = r_gp.signal.data
 gp_σ    = r_gp.std.data
 
@@ -64,9 +66,10 @@ linesegments!(ax1, vcat(collect(zip(pt1, pt2))...);
 lines!(ax1, t_decyear, signal; color = (:black, 0.2), linewidth = 1, label = "True instantaneous signal")
 
 band!(ax1, t_output, gp_μ .- 2 .* gp_σ, gp_μ .+ 2 .* gp_σ; color = (:crimson, 0.15))
-lines!(ax1, t_output, gp_μ;   color = :crimson,   linewidth = 2.5, label = "GP mean")
-lines!(ax1, t_output, sp_μ;   color = :steelblue, linewidth = 2.5, linestyle = :dash, label = "B-spline")
-lines!(ax1, t_output, sin_μ;  color = :darkorange, linewidth = 2.5, linestyle = :dot,  label = "Sinusoid")
+lines!(ax1, t_output, gp_μ;   color = :crimson,     linewidth = 2.5, label = "GP mean")
+lines!(ax1, t_output, sp_μ;   color = :steelblue,   linewidth = 2.5, linestyle = :dash, label = "B-spline")
+lines!(ax1, t_output, pwl_μ;  color = :purple,      linewidth = 2.5, linestyle = :dashdot, label = "PiecewiseLinear")
+lines!(ax1, t_output, sin_μ;  color = :darkorange,  linewidth = 2.5, linestyle = :dot,  label = "Sinusoid")
 
 axislegend(ax1; position = :lt, framevisible = true, labelsize = 12)
 save("docs/images/overview.png", fig1, px_per_unit = 2)
@@ -166,24 +169,75 @@ axislegend(ax5b; position = :lt, framevisible = true, labelsize = 11)
 save("docs/images/sinusoid_detail.png", fig5, px_per_unit = 2)
 println("Saved sinusoid_detail.png")
 
-# ── Figure 6: lines(result[:signal]) quick-start demo ────────────────────────
+# ── Figure 6: PiecewiseLinear detail ──────────────────────────────────────────
+# Demonstrate sharp corner preservation on triangular pattern
+
+# Create triangular synthetic signal
+t_daily_tri = DateTime(2015, 1, 1):Day(1):DateTime(2020, 1, 1)
+t_dec_tri = yeardecimal.(t_daily_tri)
+signal_tri = [2.0 * abs(mod(t, 0.5) - 0.25) for t in t_dec_tri]
+
+# Sample with short intervals (similar to main signal sampling)
+Random.seed!(7)  # Reproducible
+n_pwl = 60
+t_center_pwl = rand(t_daily_tri, n_pwl)
+t1_pwl = max.(t_daily_tri[1], t_center_pwl .- Day.(rand(20:80, n_pwl)))
+t2_pwl = min.(t_daily_tri[end], t_center_pwl .+ Day.(rand(20:80, n_pwl)))
+y_pwl = [mean(signal_tri[(t1_pwl[i] .<= t_daily_tri) .& (t_daily_tri .<= t2_pwl[i])])
+         for i in 1:n_pwl]
+y_pwl .+= 0.05 .* randn(n_pwl)
+
+# Disaggregate with PiecewiseLinear
+r_pwl_det = disaggregate(PiecewiseLinear(smoothness = 1e-7), y_pwl, t1_pwl, t2_pwl)
+
+t_output_pwl = yeardecimal.(dims(r_pwl_det, :Ti).val)
+pwl_det_μ = r_pwl_det.signal.data
+pwl_det_σ = r_pwl_det.std.data
+
+pt1_pwl = Point2f.(yeardecimal.(t1_pwl), y_pwl)
+pt2_pwl = Point2f.(yeardecimal.(t2_pwl), y_pwl)
+
+fig6 = Figure(size = (900, 420), fontsize = 13)
+
+ax6a = Axis(fig6[1, 1]; xlabel = "Year", ylabel = "Signal",
+    title = "Input: overlapping interval averages")
+linesegments!(ax6a, vcat(collect(zip(pt1_pwl, pt2_pwl))...);
+    color = (:purple, 0.6), linewidth = 2.5, label = "Interval averages")
+lines!(ax6a, t_dec_tri, signal_tri; color = (:black, 0.25), linewidth = 1,
+    label = "True signal (triangular)")
+axislegend(ax6a; position = :lt, framevisible = true, labelsize = 11)
+
+ax6b = Axis(fig6[1, 2]; xlabel = "Year", ylabel = "Signal",
+    title = "Output: PiecewiseLinear — preserves sharp corners")
+band!(ax6b, t_output_pwl, pwl_det_μ .- 2 .* pwl_det_σ, pwl_det_μ .+ 2 .* pwl_det_σ;
+    color = (:purple, 0.2), label = "± 2σ")
+lines!(ax6b, t_output_pwl, pwl_det_μ; color = :purple, linewidth = 2.5,
+    label = "PiecewiseLinear mean")
+lines!(ax6b, t_dec_tri, signal_tri; color = (:black, 0.25), linewidth = 1,
+    label = "True signal (triangular)")
+axislegend(ax6b; position = :lt, framevisible = true, labelsize = 11)
+
+save("docs/images/piecewise_linear_detail.png", fig6, px_per_unit = 2)
+println("Saved piecewise_linear_detail.png")
+
+# ── Figure 7: lines(result[:signal]) quick-start demo ────────────────────────
 # Mirrors the one-liner shown in the README Quick Start section.
 # Uses decimal-year x-axis since DimensionalData's Ti dimension plots that way.
-fig6 = Figure(size = (700, 300), fontsize = 13);
-ax6 = Axis(fig6[1, 1]; xlabel = "Year", ylabel = "Signal")
-lines!(ax6, t_output, gp_μ; color = :steelblue, linewidth = 2)
-save("docs/images/lines_signal.png", fig6, px_per_unit = 2)
+fig7 = Figure(size = (700, 300), fontsize = 13);
+ax7 = Axis(fig7[1, 1]; xlabel = "Year", ylabel = "Signal")
+lines!(ax7, t_output, gp_μ; color = :steelblue, linewidth = 2)
+save("docs/images/lines_signal.png", fig7, px_per_unit = 2)
 println("Saved lines_signal.png")
 
-# ── Figure 7: lines(result[:signal]) README quick-start demo ─────────────────
+# ── Figure 8: lines(result[:signal]) README quick-start demo ─────────────────
 # Reproduces what `lines(result[:signal])` produces: Date x-axis, signal y-axis.
-fig7 = Figure(size = (700, 300), fontsize = 13);
-ax7 = Axis(fig7[1, 1]; xlabel = "Date", ylabel = "Signal")
-lines!(ax7, r_spline.signal)
-save("docs/images/quickstart_lines_signal.png", fig7, px_per_unit = 2)
+fig8 = Figure(size = (700, 300), fontsize = 13);
+ax8 = Axis(fig8[1, 1]; xlabel = "Date", ylabel = "Signal")
+lines!(ax8, r_spline.signal)
+save("docs/images/quickstart_lines_signal.png", fig8, px_per_unit = 2)
 println("Saved quickstart_lines_signal.png")
 
-# ── Figure 8: per-observation weights ────────────────────────────────────────
+# ── Figure 9: per-observation weights ────────────────────────────────────────
 # Every 3rd interval gets large extra noise (σ=8); weights = 1/σ² suppress them.
 # Left panel: unweighted fit pulled toward noisy observations.
 # Right panel: weighted fit recovers the true signal.
@@ -208,31 +262,31 @@ pt2_noisy = Point2f.(yeardecimal.(t2[noisy_mask]),   y_hetero[noisy_mask])
 pt1_clean = Point2f.(yeardecimal.(t1[.!noisy_mask]), y_hetero[.!noisy_mask])
 pt2_clean = Point2f.(yeardecimal.(t2[.!noisy_mask]), y_hetero[.!noisy_mask])
 
-fig8 = Figure(size = (900, 420), fontsize = 13)
+fig9 = Figure(size = (900, 420), fontsize = 13)
 
-ax8a = Axis(fig8[1, 1]; xlabel = "Year", ylabel = "Signal",
+ax9a = Axis(fig9[1, 1]; xlabel = "Year", ylabel = "Signal",
     title = "Unweighted — high-noise intervals (red) distort fit")
-linesegments!(ax8a, vcat(collect(zip(pt1_clean, pt2_clean))...);
+linesegments!(ax9a, vcat(collect(zip(pt1_clean, pt2_clean))...);
     color = (:black, 0.35), linewidth = 2,   label = "Observations (σ≈1.5)")
-linesegments!(ax8a, vcat(collect(zip(pt1_noisy, pt2_noisy))...);
+linesegments!(ax9a, vcat(collect(zip(pt1_noisy, pt2_noisy))...);
     color = (:crimson, 0.9), linewidth = 3,  label = "High-noise obs (σ=8)")
-band!(ax8a, t_output_w, unw_μ_w .- 2 .* unw_std_w, unw_μ_w .+ 2 .* unw_std_w;
+band!(ax9a, t_output_w, unw_μ_w .- 2 .* unw_std_w, unw_μ_w .+ 2 .* unw_std_w;
     color = (:steelblue, 0.2))
-lines!(ax8a, t_output_w, unw_μ_w; color = :steelblue, linewidth = 2.5, label = "Unweighted spline")
-lines!(ax8a, t_decyear, signal;  color = (:black, 0.2), linewidth = 1, label = "True signal")
-axislegend(ax8a; position = :lt, framevisible = true, labelsize = 11)
+lines!(ax9a, t_output_w, unw_μ_w; color = :steelblue, linewidth = 2.5, label = "Unweighted spline")
+lines!(ax9a, t_decyear, signal;  color = (:black, 0.2), linewidth = 1, label = "True signal")
+axislegend(ax9a; position = :lt, framevisible = true, labelsize = 11)
 
-ax8b = Axis(fig8[1, 2]; xlabel = "Year", ylabel = "Signal",
+ax9b = Axis(fig9[1, 2]; xlabel = "Year", ylabel = "Signal",
     title = "Weighted (w = 1/σ²) — noisy intervals suppressed")
-linesegments!(ax8b, vcat(collect(zip(pt1_clean, pt2_clean))...);
+linesegments!(ax9b, vcat(collect(zip(pt1_clean, pt2_clean))...);
     color = (:black, 0.35), linewidth = 2,   label = "Observations (σ≈1.5)")
-linesegments!(ax8b, vcat(collect(zip(pt1_noisy, pt2_noisy))...);
+linesegments!(ax9b, vcat(collect(zip(pt1_noisy, pt2_noisy))...);
     color = (:crimson, 0.9), linewidth = 3,  label = "High-noise obs (w≈0.016)")
-band!(ax8b, t_output_w, wei_μ_w .- 2 .* wei_std_w, wei_μ_w .+ 2 .* wei_std_w;
+band!(ax9b, t_output_w, wei_μ_w .- 2 .* wei_std_w, wei_μ_w .+ 2 .* wei_std_w;
     color = (:forestgreen, 0.2))
-lines!(ax8b, t_output_w, wei_μ_w; color = :forestgreen, linewidth = 2.5, label = "Weighted spline")
-lines!(ax8b, t_decyear, signal;  color = (:black, 0.2), linewidth = 1, label = "True signal")
-axislegend(ax8b; position = :lt, framevisible = true, labelsize = 11)
+lines!(ax9b, t_output_w, wei_μ_w; color = :forestgreen, linewidth = 2.5, label = "Weighted spline")
+lines!(ax9b, t_decyear, signal;  color = (:black, 0.2), linewidth = 1, label = "True signal")
+axislegend(ax9b; position = :lt, framevisible = true, labelsize = 11)
 
-save("docs/images/weights_detail.png", fig8, px_per_unit = 2)
+save("docs/images/weights_detail.png", fig9, px_per_unit = 2)
 println("Saved weights_detail.png")

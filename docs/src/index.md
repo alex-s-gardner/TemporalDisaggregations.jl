@@ -16,7 +16,7 @@ hero:
 
 features:
   - title: Four Methods
-    details: B-spline, sinusoid, Gaussian Process, and Kalman-filter GP — all sharing the same interface. Switch by passing a different algorithm struct.
+    details: B-spline, piecewise-linear, sinusoid, and Gaussian Process — all sharing the same interface. Switch by passing a different algorithm struct.
   - title: Uncertainty Estimates
     details: Every method returns a spatially-varying sandwich std alongside the reconstructed signal — lower where observations are dense, higher where they are sparse.
   - title: Robust to Outliers
@@ -37,4 +37,4 @@ When intervals are irregular, overlapping, or sparse, standard interpolation fai
 
 In math: `yᵢ ≈ (1/Δtᵢ) ∫_{t1ᵢ}^{t2ᵢ} x(t) dt`
 
-![Overview of all three methods](./assets/overview.png)
+![Overview of all four methods](./assets/overview.png)
