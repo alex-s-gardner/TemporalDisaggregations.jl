@@ -96,8 +96,8 @@ deviation: lower where observations are dense, higher where they are sparse.
 # Default: balanced sharp feature preservation and gap stability
 result = disaggregate(PiecewiseLinear(), values, t1, t2; output_period=Month(1))
 
-# Maximum sharpness for small, densely-sampled datasets
-result = disaggregate(PiecewiseLinear(smoothness=1e-6), values, t1, t2)
+# Sharper features for densely-sampled datasets (use with caution)
+result = disaggregate(PiecewiseLinear(smoothness=1e-4), values, t1, t2)
 
 # Weekly output with explicit knot count
 result = disaggregate(PiecewiseLinear(n_knots=200), values, t1, t2; output_period=Week(1))

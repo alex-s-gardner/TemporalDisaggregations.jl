@@ -92,9 +92,10 @@ Ideal for time series with monotonic increase/decrease patterns (triangular peak
 
 ```julia
 result = disaggregate(PiecewiseLinear(
-    smoothness = 1e-6,      # much lower default than Spline (preserves sharp features)
+    smoothness = 1e-2,      # default: balances sharp features with gap stability
     n_knots    = 0,         # auto-computed from output_period
-    tension    = 0.0,       # blend toward pure interpolation (0 = standard)
+    gap_penalty = 100.0,    # adaptive smoothness boost in data gaps
+    gap_ridge   = 10.0,     # stabilizes coefficients in sparse regions
 ), y, t1, t2; loss_norm = L2DistLoss())
 ```
 

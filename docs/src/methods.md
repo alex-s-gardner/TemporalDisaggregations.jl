@@ -52,7 +52,15 @@ Preserves sharp corners and triangular patterns. Unlike [`Spline`](@ref) (smooth
 - Any data where Spline or GP over-smooth important sharp features
 
 ```julia
-result = disaggregate(PiecewiseLinear(smoothness=1e-8), y, t1, t2)
+# Default: balanced sharp feature preservation and gap stability
+result = disaggregate(PiecewiseLinear(), y, t1, t2)
+
+# Or with explicit parameters (showing defaults)
+result = disaggregate(PiecewiseLinear(
+    smoothness  = 1e-2,     # balances sharpness with stability
+    gap_penalty = 100.0,    # adaptive smoothness in gaps
+    gap_ridge   = 10.0      # stabilizes sparse regions
+), y, t1, t2)
 ```
 
 **Uncertainty:** Spatially-varying sandwich std — lower where observations are dense, higher where they are sparse.
