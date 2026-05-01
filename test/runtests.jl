@@ -527,6 +527,115 @@ end
             @test all(result.std.data .>= 0.0)
             @test all(isfinite, result.signal)
         end
+
+        @testset "Gap-aware regularization: backward compatibility (gap params = 0)" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 24)
+            y = [sin(2π * i / 12) for i in 1:24]
+
+            # With gap penalties explicitly disabled
+            r_disabled = disaggregate(
+                PiecewiseLinear(smoothness=1e-6, gap_penalty=0.0, gap_ridge=0.0),
+                y, t1, t2
+            )
+
+            # Default behavior with new defaults (gap_penalty=100, gap_ridge=10)
+            r_default = disaggregate(PiecewiseLinear(smoothness=1e-6), y, t1, t2)
+
+            # Both should produce valid results
+            @test norm(r_disabled.signal.data) > 0.0  # Valid result
+            @test all(r_disabled.std.data .>= 0.0)    # Valid uncertainty
+            @test norm(r_default.signal.data) > 0.0   # Valid result with defaults
+            @test all(r_default.std.data .>= 0.0)     # Valid uncertainty with defaults
+        end
+
+        @testset "Gap-aware regularization: gap oscillation suppression" begin
+            # Create 6-month gap in middle of 12-month record
+            t1_gap = vcat(
+                [Date(2020, m, 1) for m in 1:3],   # Jan-Mar 2020
+                [Date(2020, m, 1) for m in 10:12]  # Oct-Dec 2020
+            )
+            t2_gap = vcat(
+                [Date(2020, m+1, 1) for m in 1:3],
+                [Date(2021, m-9, 1) for m in 10:12]
+            )
+            y_constant = fill(100.0, 6)  # Constant signal = 100
+
+            # Without gap regularization
+            r_no_gap = disaggregate(
+                PiecewiseLinear(smoothness=1e-6, gap_penalty=0.0),
+                y_constant, t1_gap, t2_gap;
+                output_period = Day(7)
+            )
+
+            # With gap regularization (gap_penalty only, no ridge)
+            r_with_gap = disaggregate(
+                PiecewiseLinear(smoothness=1e-6, gap_penalty=100.0),
+                y_constant, t1_gap, t2_gap;
+                output_period = Day(7)
+            )
+
+            # Both should be stable (signal ~100) but with_gap should be slightly better
+            @test all(abs.(r_no_gap.signal.data .- 100.0) .< 1e-6)
+            @test all(abs.(r_with_gap.signal.data .- 100.0) .< 1e-6)
+
+            # With gap penalty should have less variation
+            @test std(r_with_gap.signal.data) <= std(r_no_gap.signal.data)
+        end
+
+        @testset "Gap-aware regularization: sharp features preserved" begin
+            # Triangular signal (sharp peak) in dense data region
+            t1_tri, t2_tri = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y_tri = [m <= 6 ? m * 20.0 : (12 - m) * 20.0 for m in 1:12]  # Triangle: 0→120→0
+
+            r = disaggregate(
+                PiecewiseLinear(smoothness=1e-6, gap_penalty=100.0),
+                y_tri, t1_tri, t2_tri;
+                output_period = Week(1)
+            )
+
+            # Peak should be sharp (not over-smoothed by gap regularization)
+            @test maximum(r.signal.data) > 100.0
+
+            # Should have well-defined triangular shape (positive correlation with input)
+            rising_indices = 1:min(20, length(r.signal.data) ÷ 2)
+            falling_indices = max(1, length(r.signal.data) - 19):length(r.signal.data)
+
+            if length(rising_indices) > 1
+                @test cor(r.signal.data[rising_indices], collect(rising_indices)) > 0.8  # Rising edge
+            end
+            if length(falling_indices) > 1
+                @test cor(r.signal.data[falling_indices], collect(length(falling_indices):-1:1)) > 0.8  # Falling edge
+            end
+        end
+
+        @testset "Gap-aware regularization: sparse record warning" begin
+            # Only 2 observations separated by 1 year
+            t1_sparse = [Date(2020, 1, 1), Date(2021, 1, 1)]
+            t2_sparse = [Date(2020, 2, 1), Date(2021, 2, 1)]
+            y_sparse = [50.0, 60.0]
+
+            # Should warn about sparse coverage
+            @test_logs (:warn, r"Very sparse observations") disaggregate(
+                PiecewiseLinear(gap_penalty=100.0),
+                y_sparse, t1_sparse, t2_sparse
+            )
+        end
+
+        @testset "Gap-aware regularization: interaction with IRLS (L1)" begin
+            t1, t2 = make_monthly_intervals(Date(2020, 1, 1), 12)
+            y = fill(100.0, 12)
+            y[6] = 500.0  # Outlier
+
+            # Gap penalties should work with L1 loss (IRLS)
+            r = disaggregate(
+                PiecewiseLinear(smoothness=1e-4, gap_penalty=50.0),
+                y, t1, t2;
+                loss_norm = L1DistLoss()
+            )
+
+            # Should downweight outlier AND stabilize any gaps
+            @test maximum(r.signal.data) < 200.0  # Outlier suppressed
+        end
     end
 
     # ─────────────────────────────────────────────────────────────────────────

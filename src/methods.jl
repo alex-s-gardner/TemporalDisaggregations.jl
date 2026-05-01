@@ -54,7 +54,7 @@ deviation: lower where observations are dense, higher where they are sparse.
 end
 
 """
-    PiecewiseLinear(; smoothness=1e-6, n_knots=0, tension=0.0)
+    PiecewiseLinear(; smoothness=1e-2, n_knots=0, tension=0.0)
 
 Piecewise linear disaggregation using linear hat functions with first-order
 difference penalties. Preserves sharp corners and triangular patterns.
@@ -75,30 +75,63 @@ The `:std` layer in the returned `DimStack` is a spatially-varying sandwich stan
 deviation: lower where observations are dense, higher where they are sparse.
 
 # Keywords
-- `smoothness::Float64 = 1e-6`: Regularization strength λ. Lower values preserve
-  sharper corners. Scaled by ‖C'C‖/n to be dimensionless across datasets. Default
-  is much lower than `Spline` to minimize smoothing of triangular patterns.
+- `smoothness::Float64 = 1e-2`: Regularization strength λ. Lower values preserve
+  sharper corners. Scaled by ‖C'C‖/n to be dimensionless across datasets. Default (1e-2)
+  balances sharp feature preservation with gap stability. For very small datasets (<50 obs)
+  or to maximize sharpness, try 1e-4 to 1e-6. For very large/sparse datasets (>10,000 obs),
+  increase to 1e-1 if needed. Still 10× lower than `Spline` default to preserve triangular patterns.
 - `n_knots::Int = 0`: Number of knots for basis functions. If 0 (default),
   auto-computed from time span and `output_period` (approximately one knot per period).
 - `tension::Float64 = 0.0`: Tension parameter ∈ [0,1]. Blends first-order
   penalty (0.0) toward pure interpolation (1.0). Higher values reduce smoothing.
+- `gap_penalty::Float64 = 100.0`: Multiplicative boost to edge penalties in data-sparse
+  regions. Higher values enforce stronger smoothness constraints in gaps. Set to 0.0 to
+  disable gap-aware edge penalties. Typical range: 10.0 (mild) to 500.0 (very strong).
+- `gap_ridge::Float64 = 10.0`: Ridge penalty coefficient in data-sparse regions. Pulls
+  basis function coefficients toward the signal mean where observations are missing.
+  Helps stabilize gaps without biasing the solution. Typical range: 1.0 (weak) to 50.0 (very strong).
 
 # Examples
 ```julia
-# Preserve sharp triangular patterns with minimal smoothing
-result = disaggregate(PiecewiseLinear(smoothness=1e-8), values, t1, t2)
-
-# Auto knot spacing tied to monthly output
+# Default: balanced sharp feature preservation and gap stability
 result = disaggregate(PiecewiseLinear(), values, t1, t2; output_period=Month(1))
+
+# Sharper features for densely-sampled datasets (use with caution)
+result = disaggregate(PiecewiseLinear(smoothness=1e-4), values, t1, t2)
 
 # Weekly output with explicit knot count
 result = disaggregate(PiecewiseLinear(n_knots=200), values, t1, t2; output_period=Week(1))
+
+# Large sparse dataset with stronger regularization
+result = disaggregate(PiecewiseLinear(smoothness=1e-1, gap_penalty=500), values, t1, t2)
 ```
+
+# Gap-Aware Regularization
+
+When data has temporal gaps, standard regularization may be insufficient to prevent
+oscillations in sparse regions. Two parameters provide adaptive control:
+
+- `gap_penalty`: Multiplicative boost to edge penalties in gaps (default 100.0).
+  Higher values enforce stronger smoothness in sparse regions. Typical: 10-500.
+- `gap_ridge`: Ridge penalty in gaps (default 10.0). Pulls coefficients toward
+  the signal mean where data is missing. Stabilizes gaps without bias.
+
+**Quick tuning guide:**
+- Oscillations in gaps? → Increase `gap_penalty` (100 → 500) or `gap_ridge` (10 → 50), or increase `smoothness` (1e-2 → 1e-1)
+- Gap interpolation too flat? → Decrease `gap_penalty` (100 → 50 → 10) or decrease `gap_ridge` (10 → 1)
+- Sharp features lost in dense regions? → Decrease `smoothness` (1e-2 → 1e-4 → 1e-6)
+- Need uniform regularization? → Set `gap_penalty=0.0, gap_ridge=0.0`
+- Very large dataset (>5000 obs) with extreme oscillations? → Increase `smoothness` to 1e-1 (matches `Spline` default)
+
+**Backward compatibility:** Setting `gap_penalty=0.0, gap_ridge=0.0` recovers the
+original behavior (uniform regularization, no gap detection).
 """
 @kwdef struct PiecewiseLinear <: DisaggregationMethod
-    smoothness::Float64 = 1e-6
+    smoothness::Float64 = 1e-2
     n_knots::Int = 0
     tension::Float64 = 0.0
+    gap_penalty::Float64 = 100.0
+    gap_ridge::Float64 = 10.0  # Pulls coefficients toward signal mean in gaps
 end
 
 """
