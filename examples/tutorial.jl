@@ -94,8 +94,8 @@ begin
 
     r_sp  = disaggregate(Spline(), y_small, t1_small, t2_small)
     r_sin = disaggregate(Sinusoid(), y_small, t1_small, t2_small)
-    # PiecewiseLinear: minimal smoothing to preserve sharp corners
-    r_pwl = disaggregate(PiecewiseLinear(smoothness=1e-8), y_small, t1_small, t2_small)
+    # PiecewiseLinear: uses defaults (smoothness=1e-2, gap-aware regularization)
+    r_pwl = disaggregate(PiecewiseLinear(), y_small, t1_small, t2_small)
     # For sparse long intervals (3–8 months), the kernel must have:
     #   (1) annual periodic structure — captures seasonal cycles
     #   (2) lengthscale >> interval length — avoids posterior collapse
@@ -586,20 +586,22 @@ println("Saved fig8_weights.png")
 
 println("\n── Figure 9: PiecewiseLinear vs Spline on triangular pattern ──")
 
-# Generate triangular wave signal
-t_tri = collect(Date(2020, 1, 1):Day(7):Date(2023, 1, 1))  # weekly
+# Generate triangular wave signal with taller, sharper peaks
+t_tri = collect(Date(2020, 1, 1):Day(1):Date(2021, 6, 1))  # daily
 t_tri_dec = yeardecimal.(t_tri)
-# Sawtooth: sharp rise then sharp fall every 6 months
-signal_tri = [2.0 * abs(mod(t, 0.5) - 0.25) for t in t_tri_dec]
+# Sawtooth: sharp rise then sharp fall every 6 months, peak height = 1.0
+signal_tri = [4.0 * abs(mod(t, 0.5) - 0.25) for t in t_tri_dec]
 
-# Create monthly intervals with noise
-n_tri = 36
-t1_tri, t2_tri = make_monthly_intervals(Date(2020, 1, 1), n_tri)
+# Create 10-day intervals (good sampling density without over-constraining)
+interval_starts = Date(2020, 1, 1):Day(10):Date(2021, 5, 1)
+t1_tri = collect(interval_starts)
+t2_tri = t1_tri .+ Day(9)  # 10-day intervals
+n_tri = length(t1_tri)
 y_tri = [mean(signal_tri[(t1_tri[i] .<= t_tri) .& (t_tri .<= t2_tri[i])]) for i in 1:n_tri]
 y_tri .+= 0.05 .* randn(n_tri)  # add noise
 
-# Fit with PiecewiseLinear (minimal smoothing) and Spline (default smoothing)
-r_pwl_tri = disaggregate(PiecewiseLinear(smoothness=1e-8), y_tri, t1_tri, t2_tri)
+# Fit with PiecewiseLinear (default) and Spline (default smoothing)
+r_pwl_tri = disaggregate(PiecewiseLinear(), y_tri, t1_tri, t2_tri)
 r_sp_tri  = disaggregate(Spline(smoothness=1e-2), y_tri, t1_tri, t2_tri)
 
 t_out_tri = t_axis(r_pwl_tri)
@@ -612,27 +614,31 @@ segs_tri = make_segs(t1_tri, t2_tri, y_tri)
 fig9 = Figure(size = (1000, 420), fontsize = 12)
 
 ax9a = Axis(fig9[1, 1]; xlabel = "Year", ylabel = "Signal",
-    title = "Spline (smoothness=1e-2) — over-smooths sharp corners")
+    title = "Spline — over-smooths sharp corners")
 linesegments!(ax9a, segs_tri; color = (:black, 0.4), linewidth = 2,
-    label = "Interval averages (input)")
+    label = "Interval averages")
 band!(ax9a, t_out_tri, sp_tri_μ .- 2sp_tri_σ, sp_tri_μ .+ 2sp_tri_σ;
     color = (:steelblue, 0.2))
-lines!(ax9a, t_out_tri, sp_tri_μ; color = :steelblue, linewidth = 2.5,
-    label = "Spline (smooth curves)")
-lines!(ax9a, t_tri_dec, signal_tri; color = (:black, 0.2), linewidth = 1,
-    label = "True signal (triangular)")
+lines!(ax9a, t_out_tri, sp_tri_μ; color = :steelblue, linewidth = 3,
+    label = "Spline")
+lines!(ax9a, t_tri_dec, signal_tri; color = (:black, 0.3), linewidth = 1.5,
+    label = "True signal")
+# Zoom to show 1.5 peaks clearly
+xlims!(ax9a, 2020.0, 2020.75)
 axislegend(ax9a; position = :lt, labelsize = 11)
 
 ax9b = Axis(fig9[1, 2]; xlabel = "Year", ylabel = "Signal",
-    title = "PiecewiseLinear (smoothness=1e-8) — preserves sharp peaks")
+    title = "PiecewiseLinear — preserves sharp peaks")
 linesegments!(ax9b, segs_tri; color = (:black, 0.4), linewidth = 2,
-    label = "Interval averages (input)")
+    label = "Interval averages")
 band!(ax9b, t_out_tri, pwl_tri_μ .- 2pwl_tri_σ, pwl_tri_μ .+ 2pwl_tri_σ;
     color = (:purple, 0.2))
-lines!(ax9b, t_out_tri, pwl_tri_μ; color = :purple, linewidth = 2.5,
-    label = "PiecewiseLinear (sharp corners)")
-lines!(ax9b, t_tri_dec, signal_tri; color = (:black, 0.2), linewidth = 1,
-    label = "True signal (triangular)")
+lines!(ax9b, t_out_tri, pwl_tri_μ; color = :purple, linewidth = 3,
+    label = "PiecewiseLinear")
+lines!(ax9b, t_tri_dec, signal_tri; color = (:black, 0.3), linewidth = 1.5,
+    label = "True signal")
+# Zoom to show 1.5 peaks clearly
+xlims!(ax9b, 2020.0, 2020.75)
 axislegend(ax9b; position = :lt, labelsize = 11)
 
 save(joinpath(fig_dir, "fig9_piecewise_linear_detail.png"), fig9, px_per_unit = 2)

@@ -105,6 +105,10 @@ function disaggregate(m::PiecewiseLinear,
         throw(ArgumentError("tension must be ≥ 0."))
     m.n_knots >= 0 ||
         throw(ArgumentError("n_knots must be ≥ 0 (0 = auto)."))
+    m.gap_penalty >= 0.0 ||
+        throw(ArgumentError("gap_penalty must be ≥ 0."))
+    m.gap_ridge >= 0.0 ||
+        throw(ArgumentError("gap_ridge must be ≥ 0."))
     if !isnothing(weights)
         length(weights) == n ||
             throw(DimensionMismatch("weights must have the same length as aggregate_values."))
@@ -157,6 +161,46 @@ function disaggregate(m::PiecewiseLinear,
     t_knots = collect(range(t1_min, t2_max; length = n_knots))
     h = n_knots > 1 ? (t2_max - t1_min) / (n_knots - 1) : 1.0
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Gap detection: compute observation coverage at each knot position
+    # ──────────────────────────────────────────────────────────────────────────
+    obs_coverage = zeros(Float64, n_knots)
+
+    if m.gap_penalty > 0.0 || m.gap_ridge > 0.0
+        window_radius = 2 * h  # Window = 2× hat function support
+
+        for k in 1:n_knots
+            t_k = t_knots[k]
+            for i in 1:n
+                # Check if observation interval overlaps window around knot k
+                # Use t2[i] and t1[i] which are decimal years, not Date objects
+                if (t2[i] >= t_k - window_radius) &&
+                   (t1[i] <= t_k + window_radius)
+                    # Weight by fractional overlap (more robust than binary count)
+                    overlap_start = max(t1[i], t_k - window_radius)
+                    overlap_end = min(t2[i], t_k + window_radius)
+                    obs_coverage[k] += (overlap_end - overlap_start) / (2 * window_radius)
+                end
+            end
+        end
+
+        # Normalize coverage to [0, 1]
+        coverage_max = maximum(obs_coverage)
+        if coverage_max > 1e-10
+            obs_coverage ./= coverage_max
+        end
+
+        # Warn if entire record is sparse (all knots have low coverage)
+        if coverage_max < 0.1
+            @warn "Very sparse observations: all knots have <10% coverage. " *
+                  "Gap-aware regularization will be strong everywhere. " *
+                  "Consider increasing n_knots or using a different method."
+        end
+    end
+
+    # Gap indicator: 1.0 = full gap, 0.0 = dense data
+    gap_indicator = 1.0 .- obs_coverage
+
     # Observation matrix C: C[i,k] = (1/Δt[i]) * ∫[t1[i], t2[i]] φₖ(t) dt
     # Only knots within [t1[i] - h, t2[i] + h] contribute (sparse rows).
     Δt = t2 .- t1
@@ -176,19 +220,44 @@ function disaggregate(m::PiecewiseLinear,
         end
     end
 
-    # First-order difference penalty: ‖D₁ θ‖²
-    D1   = _difference_matrix(n_knots, 1)
-    D1D1 = D1' * D1
+    # ──────────────────────────────────────────────────────────────────────────
+    # Adaptive penalty matrix construction
+    # ──────────────────────────────────────────────────────────────────────────
+    D1 = _difference_matrix(n_knots, 1)
 
-    # Optional tension penalty: blend toward pure interpolation
-    # tension = 0.0 → standard first-order penalty
-    # tension = 1.0 → ridge penalty (penalize ‖θ‖²)
-    if m.tension > 0.0
-        scale = norm(D1D1) / (n_knots + 1e-10)
-        P = (1.0 - m.tension) * D1D1 + m.tension * scale * I
-    else
-        P = D1D1
+    # 1. Build edge weights for first-order penalty (one weight per edge)
+    n_edges = n_knots - 1
+    w_gap = ones(Float64, n_edges)
+
+    if m.gap_penalty > 0.0
+        for k in 1:n_edges
+            # Edge k connects knots k and k+1
+            # Use average gap indicator of the two adjacent knots
+            avg_gap = 0.5 * (gap_indicator[k] + gap_indicator[k+1])
+            w_gap[k] = 1.0 + m.gap_penalty * avg_gap
+        end
     end
+
+    # Weighted first-order penalty: D1' * Diag(w_gap) * D1
+    P_smooth = D1' * Diagonal(w_gap) * D1
+
+    # 2. Build ridge penalty (coefficient magnitude penalization)
+    # Combines uniform tension (backward compat) with gap-specific boost
+    w_ridge = zeros(Float64, n_knots)
+
+    if m.tension > 0.0 || m.gap_ridge > 0.0
+        w_ridge = m.tension .+ m.gap_ridge .* gap_indicator
+
+        # Scale ridge using base D1'D1 (not gap-weighted P_smooth) to avoid compounding
+        D1D1_base = D1' * D1
+        scale = norm(D1D1_base) / (n_knots + 1e-10)
+        P_ridge = Diagonal(scale .* w_ridge)
+    else
+        P_ridge = Diagonal(w_ridge)  # Zero matrix
+    end
+
+    # Combined penalty matrix
+    P = P_smooth + P_ridge
 
     # Weighted least-squares with first-order regularization.
     # λ scaled by ‖C'C‖/n so `smoothness` is dimensionless.
@@ -197,7 +266,20 @@ function disaggregate(m::PiecewiseLinear,
     C_w    = sqrt.(w_obs) .* C
     CWC    = C_w' * C_w
     λ      = m.smoothness * (norm(CWC) / n + 1e-10)
-    θ      = _pwl_solve(CWC + λ * P, C' * (w_obs .* aggregate_values))
+
+    # Ridge penalty shift: pull toward signal mean instead of zero
+    # Penalty is ||θ - μ||² instead of ||θ||², where μ = mean(observations)
+    # This adds λ * μ * w_ridge to the RHS (weighted by ridge penalty strength)
+    rhs = C' * (w_obs .* aggregate_values)
+    if m.tension > 0.0 || m.gap_ridge > 0.0
+        signal_mean = mean(aggregate_values)
+        D1D1_base = D1' * D1
+        scale = norm(D1D1_base) / (n_knots + 1e-10)
+        ridge_shift = λ * signal_mean * scale .* w_ridge
+        rhs = rhs .+ ridge_shift
+    end
+
+    θ = _pwl_solve(CWC + λ * P, rhs)
     w_irls = ones(n)  # identity for L2; overwritten by L1/Huber
 
     # Pre-allocate residual; computed once for L2, updated each IRLS iteration for L1/Huber.
@@ -220,6 +302,10 @@ function disaggregate(m::PiecewiseLinear,
             @. A_irls  = CWC_e + λ * P
             @. w_eff_y = w_eff_i * aggregate_values
             mul!(rhs_irls, C', w_eff_y)
+            # Add ridge shift for IRLS iteration (same as L2 case)
+            if m.tension > 0.0 || m.gap_ridge > 0.0
+                rhs_irls .+= ridge_shift
+            end
             θ_new = _pwl_solve(A_irls, rhs_irls)
             mul!(r, C, θ_new); @. r = aggregate_values - r
             _irls_converged(θ_new, θ, irls_tol) && (θ = θ_new; break)
@@ -281,6 +367,13 @@ function disaggregate(m::PiecewiseLinear,
             :smoothness    => m.smoothness,
             :n_knots       => n_knots,
             :tension       => m.tension,
+            :gap_penalty   => m.gap_penalty,
+            :gap_ridge     => m.gap_ridge,
+            :gap_coverage  => (
+                minimum = minimum(obs_coverage),
+                maximum = maximum(obs_coverage),
+                mean    = mean(obs_coverage)
+            ),
             :loss_norm     => string(loss_norm),
             :output_period => output_period,
         )
